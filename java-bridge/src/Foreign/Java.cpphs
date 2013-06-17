@@ -1,0 +1,1206 @@
+{-# LANGUAGE Haskell2010
+    , MultiParamTypeClasses
+    , FunctionalDependencies
+    , FlexibleInstances
+    , FlexibleContexts
+    , UndecidableInstances
+ #-}
+{-# OPTIONS
+    -Wall
+    -fno-warn-missing-signatures
+    -fno-warn-name-shadowing
+ #-}
+
+-- |
+-- Module       : Foreign.Java
+-- Copyright    : (c) Julian Fleischer 2013
+-- License      : MIT (See LICENSE file in cabal package)
+--
+-- Maintainer   : julian.fleischer@fu-berlin.de
+-- Stability    : provisional
+-- Portability  : non-portable (see LANGUAGE pragma)
+--
+-- This module contains the medium level interface to the Java Bridge.
+--
+-- See "Foreign.Java.JNI.Safe" and "Foreign.Java.JNI.Unsafe" for the low
+-- level interface which is a plain translation of the Java Native
+-- Interface. Information about the library can be retrieved using
+-- "Foreign.Java.JNI".
+--
+-- High level bindings can be generated using "Foreign.Java.Bindings".
+module Foreign.Java (
+
+    -- * Medium Level Java Interface
+    -- $medium_level_intro
+
+    -- ** Obtaining Class and Method References
+    -- $obtaining_references
+
+    -- ** Calling Methods
+    -- $calling_methods
+
+    -- * Reference
+    -- ** The Java Monad
+    Java,
+
+    runJava,
+    runJava',
+
+    initJava,
+    setUnsafe,
+
+    runJavaGui,
+    runJavaGui',
+
+    -- ** Classes and Objects
+    getClass,
+    getConstructor,
+
+    -- *** Object creation
+    newObject,
+    newObjectE,
+    newObjectX,
+    newObjectFrom,
+    newObjectFromE,
+    newObjectFromX,
+
+    -- ** Methods
+    getMethod,
+    getStaticMethod,
+    bindMethod,
+    bindStaticMethod,
+
+    -- *** Method invocation
+    callMethod,
+    callMethodE,
+    callMethodX,
+    callStaticMethod,
+    callStaticMethodE,
+    callStaticMethodX,
+
+    -- ** Fields
+    getField,
+    getStaticField,
+    readField,
+    readStaticField,
+    writeField,
+    writeStaticField,
+
+    -- ** Arrays
+    arrayLength,
+    JavaArray (..),
+
+    -- ** Objects
+    JavaObject (..),
+    isInstanceOf,
+
+    -- ** Utilities
+    io,
+    -- | Re-exported for convenience when dealing with high-level bindings.
+    module Foreign.Java.Value,
+
+    -- *** Interaction with IO
+    liftIO,
+    forkJava,
+    waitJava,
+
+    -- ** JVM data
+    JVM,
+    JClass,
+    JObject,
+    JArray,
+    JField,
+    JStaticField,
+    JMethod,
+    JStaticMethod,
+    JConstructor,
+    JThrowable,
+    JavaThreadId,
+
+    -- ** Method discovery
+    MethodDescriptor (..),
+    (-->),
+
+    void,
+    boolean,
+    char,
+    byte,
+    short,
+    int,
+    long,
+    float,
+    double,
+    object,
+    string,
+    array
+
+  ) where
+
+import Control.Exception
+import Control.Monad.State hiding (void)
+import qualified Control.Monad.State as State
+
+import Data.Maybe
+import Data.Int
+import Data.Word
+
+-- The monad class and associated functions come from
+-- the following module:
+import Foreign.Java.JavaMonad
+
+import qualified Foreign.Java.JNI.Safe   as JNI
+import qualified Foreign.Java.JNI.Unsafe as Unsafe
+import qualified Foreign.Java.JNI.Types  as Core
+
+import Foreign.Java.JNI.Types (
+    JObject (..),
+    JClass (..),
+    JThrowable (..),
+    JArray (..)
+  )
+
+import Foreign hiding (void)
+import Foreign.C.String
+
+import Foreign.Java.Types
+import Foreign.Java.Util
+import Foreign.Java.Value
+
+
+-- | INTERNAL Checks whether an exception has occurred in the
+-- virtual machine and returns either a @Left JThrowable@
+-- if that is so or a @Right a@ where a is the excepted type
+-- of the result.
+check result = do
+    vm   <- getVM
+    safe <- getSafe
+
+    let excOccurredClear = if safe then JNI.exceptionOccurredClear
+                                   else Unsafe.exceptionOccurredClear
+        release = if safe then JNI.release else Unsafe.release
+
+    exc <- io $ excOccurredClear vm
+    if exc /= nullPtr
+        then do ptr <- io $ newForeignPtr release exc
+                return $ Left (JThrowable ptr)
+        else do return $ Right result
+
+throwJavaException :: JThrowable -> Java a
+-- | INTERNAL This function is used to really throw a JThrowable,
+-- that is to throw a Java Exception as an exception in Haskell.
+throwJavaException throwable = do
+    strMessage <- toString throwable
+    io $ throw $ JavaException strMessage throwable
+
+-- | Provides basic functions that every Java Object supports.
+-- There are instances for 'JObject', 'JClass', 'JThrowable',
+-- and 'JArray' (which are all references to objects in the
+-- virtual machine).
+--
+-- Minimal complete definition: 'asObject'.
+class JavaObject a where
+
+    -- | Invokes the @toString@ method which every Java Object has.
+    toString :: a -> Java String
+
+    -- | Invokes the @hashCode@ method which every Java Object has.
+    hashCode :: a -> Java Int32
+
+    -- | Turns the reference into a JObject. This can be used
+    -- to down-cast any reference to an Object inside the JVM
+    -- to a JObject.
+    asObject :: a -> Java JObject
+
+    -- | Returns a reference to the Class of the given object.
+    classOf  :: a -> Java JClass
+
+    -- | Checks two objects for equality using their @equals@ methods.
+    equals   :: JavaObject b => a -> b -> Java Bool
+
+    toString obj = asObject obj >>= toString
+    hashCode obj = asObject obj >>= hashCode
+    classOf obj  = asObject obj >>= classOf
+
+    equals this obj = do
+        this'  <- asObject this
+        object <- asObject obj
+        this' `equals` object
+
+
+instance JavaObject JObject where
+
+    toString obj = do
+        clazz <- classOf obj
+        state <- State.get
+        toString <- case jvmToString state of
+            Nothing -> do
+                method <- clazz `bindMethod` "toString" ::= string
+                State.put (state { jvmToString = Just method })
+                return method
+            (Just method) -> return method
+        toString obj $> maybe "" id
+
+    hashCode obj = do
+        clazz <- classOf obj
+        state <- State.get
+        hashCode <- case jvmHashCode state of
+            Nothing -> do
+                method <- clazz `bindMethod` "hashCode" ::= int
+                State.put (state { jvmHashCode = Just method })
+                return method
+            (Just method) -> return method
+        hashCode obj
+
+    asObject = return
+
+    classOf (JObject obj) = do
+        safe <- getSafe
+        vm   <- getVM
+        ptr  <- io (withForeignPtr obj $
+                    \p -> (if safe then JNI.getObjectClass
+                                   else Unsafe.getObjectClass) vm p)
+
+        JClass <$ io (newForeignPtr (if safe then JNI.release
+                                             else Unsafe.release) ptr)
+
+    equals this obj = do
+        clazz  <- classOf this
+        equals <- clazz `bindMethod`
+                    "equals" ::= object "java.lang.Object" --> boolean
+        object <- asObject obj
+        this `equals` Just object
+
+-- | Every JArray is a JavaObject.
+instance JavaObject (JArray L) where
+    toString arr = toList arr
+        >>= mapM (maybe (return "null") toString)
+        >>= return . show
+
+    asObject (JArray _ ptr) = return (JObject ptr)
+
+-- further instances for primitive types are below
+
+-- | Every JClass is a JavaObject.
+instance JavaObject JClass where
+    asObject (JClass ptr) = return (JObject $ castForeignPtr ptr)
+
+-- | Every JThrowable is a JavaObject.
+instance JavaObject JThrowable where
+    asObject (JThrowable ptr) = return (JObject $ castForeignPtr ptr)
+
+
+arrayLength :: JArray e -> Java Int32
+-- ^ Return the length of an JArray.
+arrayLength (JArray size _) = return size
+
+
+class JavaArray e a | e -> a where
+    at      :: JArray e -> Int32 -> Java a
+    write   :: JArray e -> Int32 -> a -> Java ()
+    toList  :: JArray e -> Java [a]
+
+    toList arr@(JArray size _) = forM [0..size-1] (arr `at`)
+
+#define JAVA_ARRAY(TYPE, RESULT, GETTER, SETTER, ARG, GET, SET) \
+    instance JavaArray TYPE RESULT where {\
+        at = _get GETTER GET (\s v -> s { GET = v }) ARG ;\
+        write = _set SETTER SET (\s v -> s { SET = v }) ARG }\
+    ;\
+    instance JavaObject (JArray TYPE) where {\
+        toString arr = toList arr >>= return . show ;\
+        asObject (JArray _ ptr) = return (JObject ptr) }
+
+JAVA_ARRAY(Z, Bool,   "getBoolean", "setBoolean", boolean, jvmGetZ, jvmSetZ)
+JAVA_ARRAY(C, Word16, "getChar",    "setChar",    char,    jvmGetC, jvmSetC)
+JAVA_ARRAY(B, Int8,   "getByte",    "setByte",    byte,    jvmGetB, jvmSetB)
+JAVA_ARRAY(S, Int16,  "getShort",   "setShort",   short,   jvmGetS, jvmSetS)
+JAVA_ARRAY(I, Int32,  "getInt",     "setInt",     int,     jvmGetI, jvmSetI)
+JAVA_ARRAY(J, Int64,  "getLong",    "setLong",    long,    jvmGetJ, jvmSetJ)
+JAVA_ARRAY(D, Double, "getDouble",  "setDouble",  double,  jvmGetD, jvmSetD)
+JAVA_ARRAY(F, Float,  "getFloat",   "setFloat",   float,   jvmGetF, jvmSetF)
+
+instance JavaArray L (Maybe JObject) where
+    at = _get "get" jvmGetL (\s v -> s { jvmGetL = v }) (object "java.lang.Object")
+    write = _set "set" jvmSetL (\s v -> s { jvmSetL = v }) (object "java.lang.Object")
+
+instance JavaArray (A e) (Maybe (JArray e)) where
+    at arr ix = do
+        let get = _get "get" jvmGetL (\s v -> s { jvmGetL = v }) (object "java.lang.Object")
+        result <- get arr ix
+        case result of
+            (Just (JObject ptr)) -> do
+                vm <- getVM
+                safe <- getSafe
+
+                length <- io $ withForeignPtr ptr $ \ptr ->
+                    (if safe then JNI.getArrayLength
+                             else Unsafe.getArrayLength) vm ptr
+
+                return $ Just $ JArray length ptr
+            Nothing -> return Nothing
+        
+    write arr ix arg = do
+        let set = _set "set" jvmSetL (\s v -> s { jvmSetL = v }) (object "java.lang.Object")
+        case arg of
+            Nothing -> set arr ix Nothing
+            (Just (JArray _ ptr)) -> set arr ix (Just (JObject ptr))
+
+
+_get getter get set result (JArray size arr) ix
+        | ix < 0 || ix >= size = fail $ "Index out of bounds (read): " ++ show ix
+        | otherwise = do
+            state <- State.get
+            -- get the getter function cached in the monad
+            -- or if there is none look it up in the VM.
+            method <- case get state of
+                Nothing -> do
+                    (Just arrayClass) <- getClass "java.lang.reflect.Array"
+                    m <- arrayClass `bindStaticMethod` getter
+                            ::= object "java.lang.Object" --> int --> result
+                    State.put $ set state $ Just $ m
+                    return m
+                Just m -> return m
+            method (Just $ JObject arr) ix
+
+_set setter get set arg (JArray size arr) ix value
+        | ix < 0 || ix >= size = fail $ "Index out of bounds (write): " ++ show ix
+        | otherwise = do
+            state <- State.get
+            -- get the setter function cached in the monad
+            -- of if there is none look it up in the VM.
+            method <- case get state of
+                Nothing -> do
+                    (Just arrayClass) <- getClass "java.lang.reflect.Array"
+                    m <- arrayClass `bindStaticMethod` setter
+                            ::= object "java.lang.Object" --> int --> arg --> void
+                    State.put $ set state $ Just $ m
+                    return m
+                Just m -> return m
+            method (Just $ JObject arr) ix value
+
+
+newObject, newObjectX :: JClass
+                      -> Java (Maybe JObject)
+newObject clazz = newObjectE clazz
+    >>= either (\exc -> toString exc >>= fail) return
+
+newObjectE :: JClass
+           -> Java (Either JThrowable (Maybe JObject))
+newObjectE clazz = newObjectX clazz >>= check
+
+newObjectX clazz = do
+    vm <- getVM
+    safe <- getSafe
+
+    ptr <- io $ do
+        csig <- newCString "()V"
+        cptr <- withForeignPtr (jclassPtr clazz) $ \p ->
+                    (if safe then JNI.getConstructorID
+                             else Unsafe.getConstructorID) vm p csig
+        free csig
+        return cptr
+    
+    if ptr == nullPtr
+    then return $ fail "no default constructor"
+    else do
+        obj <- io $ withForeignPtr (jclassPtr clazz) $ \p ->
+                    (if safe then JNI.newObject
+                             else Unsafe.newObject) vm p ptr nullPtr
+        if obj == nullPtr
+            then return (fail "could not create object")
+            else io (newForeignPtr (if safe then JNI.release
+                                            else Unsafe.release) obj)
+                    >>= return . return . JObject
+
+
+-- getConstructor
+
+data JConstructor a = JConstructor (ForeignPtr Core.JClassRef)
+                                   (Ptr Core.JConstructorID) a
+    deriving Show
+
+infixl 7 `getConstructor`
+
+getConstructor clazz p = do
+    vm <- getVM
+    safe <- getSafe
+
+    ptr <- io $ do
+        csig <- newCString $ constructorSignature p
+
+        cID <- withForeignPtr (jclassPtr clazz) $ \p -> do
+                  (if safe then JNI.getConstructorID
+                           else Unsafe.getConstructorID) vm p csig
+        free csig
+        return cID
+
+    return $ if ptr == nullPtr
+        then fail "No such constructor"
+        else return $ JConstructor (jclassPtr clazz) ptr p
+
+
+-- createObject
+
+newObjectFrom :: (NewObject p b) => JConstructor p -> b
+newObjectFrom (JConstructor clazz ptr t) =
+    _newObject (ConstructorH clazz ptr) [] t
+
+newObjectFromE :: (NewObjectE p b) => JConstructor p -> b
+newObjectFromE (JConstructor clazz ptr t) =
+    _newObjectE (ConstructorH clazz ptr) [] t
+
+newObjectFromX :: (NewObjectX p b) => JConstructor p -> b
+newObjectFromX (JConstructor clazz ptr t) =
+    _newObjectX (ConstructorH clazz ptr) [] t
+
+
+data ConstructorH = ConstructorH (ForeignPtr Core.JClassRef)
+                                 (Ptr Core.JConstructorID) deriving Show
+
+class NewObject  a b | a -> b
+    where _newObject  :: ConstructorH -> [Core.JArg] -> a -> b
+class NewObjectE a b | a -> b
+    where _newObjectE :: ConstructorH -> [Core.JArg] -> a -> b
+class NewObjectX a b | a -> b
+    where _newObjectX :: ConstructorH -> [Core.JArg] -> a -> b
+
+instance (JArg t v, NewObject x b) => NewObject (P t x) (v -> b) where
+    _newObject m args (P t x) val = _newObject m (jarg t val : args) x
+instance (JArg t v, NewObjectE x b) => NewObjectE (P t x) (v -> b) where
+    _newObjectE m args (P t x) val = _newObjectE m (jarg t val : args) x
+instance (JArg t v, NewObjectX x b) => NewObjectX (P t x) (v -> b) where
+    _newObjectX m args (P t x) val = _newObjectX m (jarg t val : args) x
+
+#define NEW_OBJECT(TYPE, RESULT) \
+    instance NewObject  TYPE (RESULT -> Java (Maybe JObject)) \
+        where { _newObject = nuObject }\
+    ;\
+    instance NewObjectX TYPE (RESULT -> Java (Maybe JObject)) \
+        where { _newObjectX = nuObjectX }\
+    ;\
+    instance NewObjectE TYPE \
+        (RESULT -> Java (Either JThrowable (Maybe JObject))) where \
+        { _newObjectE = nuObjectE }
+
+NEW_OBJECT(Z, Bool)
+NEW_OBJECT(C, Word16)
+NEW_OBJECT(B, Int8)
+NEW_OBJECT(S, Int16)
+NEW_OBJECT(I, Int32)
+NEW_OBJECT(J, Int64)
+NEW_OBJECT(F, Float)
+NEW_OBJECT(D, Double)
+NEW_OBJECT(L, Maybe JObject)
+NEW_OBJECT(Q, Maybe JObject)
+NEW_OBJECT(X, String)
+NEW_OBJECT((A e), Maybe (JArray e))
+
+
+nuObject c args t val = nuObjectE c args t val
+    >>= either (\exc -> toString exc >>= fail) return
+
+nuObjectE c args t val = nuObjectX c args t val >>= check
+
+nuObjectX (ConstructorH clazz cid) args t val = do
+    vm  <- getVM
+    safe <- getSafe
+
+    ptr <- liftIO $ do
+        let mkValues = (if safe then JNI.mkJValues
+                                else Unsafe.mkJValues)
+        jvalues <- mkValues vm $ reverse (jarg t val : args)
+        jobject <- withForeignPtr clazz $ \p ->
+                       (if safe then JNI.newObject
+                                else Unsafe.newObject) vm p cid jvalues
+        free jvalues
+        return jobject
+
+    if ptr == nullPtr
+        then return (fail "Object could not be created")
+        else io (newForeignPtr (if safe then JNI.release
+                                        else Unsafe.release) ptr)
+                >>= return . return . JObject
+
+
+-- getStaticMethod
+
+data JStaticMethod a = JStaticMethod (ForeignPtr Core.JClassRef)
+                                     (Ptr Core.JStaticMethodID) a
+    deriving Show
+
+infixl 7 `getStaticMethod`
+
+getStaticMethod :: (Method (p -> String))
+                => JClass
+                -> MethodDescriptor p
+                -> Java (Maybe (JStaticMethod p))
+getStaticMethod clazz (name ::= p) = do
+    vm <- getVM
+    safe <- getSafe
+
+    ptr <- liftIO $ do
+        cname <- newCString name
+        csig  <- newCString $ methodSignature p
+
+        let getStaticMethodID = if safe then JNI.getStaticMethodID
+                                        else Unsafe.getStaticMethodID
+        methodID <- withForeignPtr (jclassPtr clazz) $ \p -> do
+                        getStaticMethodID vm p cname csig
+        free cname >> free csig
+        return methodID
+
+    return $ if ptr == nullPtr
+        then fail "No such static method"
+        else return $ JStaticMethod (jclassPtr clazz) ptr p
+
+
+-- bindStaticMethod
+
+infixl 7 `bindStaticMethod`
+
+bindStaticMethod :: (Method (p -> String), StaticCall p b)
+                 => JClass
+                 -> MethodDescriptor p
+                 -> Java b
+bindStaticMethod c m =
+    getStaticMethod c m $> fromJust $> callStaticMethod
+
+
+-- bindMethod
+
+infixl 7 `bindMethod`
+
+bindMethod :: (Method (p -> String), MethodCall p b)
+           => JClass
+           -> MethodDescriptor p
+           -> Java (JObject -> b)
+bindMethod c m = getMethod c m $> fromJust $> callMethod
+
+
+-- getMethod
+
+data JMethod a = JMethod (ForeignPtr Core.JClassRef) (Ptr Core.JMethodID) a
+    deriving Show
+
+infixl 7 `getMethod`
+
+getMethod :: (Method (p -> String))
+           => JClass -> MethodDescriptor p -> Java (Maybe (JMethod p))
+getMethod clazz (name ::= p) = do
+    vm <- getVM
+    safe <- getSafe
+
+    ptr <- liftIO $ do
+        cname <- newCString name
+        csig  <- newCString $ methodSignature p
+
+        let getMethod = if safe then JNI.getMethodID
+                                else Unsafe.getMethodID
+        methodID <- withForeignPtr (jclassPtr clazz) $
+                        \p -> getMethod vm p cname csig
+        free cname >> free csig
+        return methodID
+
+    return $ if ptr == nullPtr
+        then fail "No such method"
+        else return $ JMethod (jclassPtr clazz) ptr p
+
+
+callStaticMethod :: (StaticCall p b) => JStaticMethod p -> b
+callStaticMethod (JStaticMethod clazz ptr t) =
+    _staticCall (StaticH clazz ptr) [] t
+
+callStaticMethodE :: (StaticCallE p b) => JStaticMethod p -> b
+callStaticMethodE (JStaticMethod clazz ptr t) =
+    _staticCallE (StaticH clazz ptr) [] t
+
+callStaticMethodX :: (StaticCallX p b) => JStaticMethod p -> b
+callStaticMethodX (JStaticMethod clazz ptr t) =
+    _staticCallX (StaticH clazz ptr) [] t
+
+
+data StaticH = StaticH (ForeignPtr Core.JClassRef)
+                       (Ptr Core.JStaticMethodID)
+    deriving Show
+
+class StaticCall  a b | a -> b
+    where _staticCall  :: StaticH -> [Core.JArg] -> a -> b
+class StaticCallE a b | a -> b
+    where _staticCallE :: StaticH -> [Core.JArg] -> a -> b
+class StaticCallX a b | a -> b
+    where _staticCallX :: StaticH -> [Core.JArg] -> a -> b
+
+instance (JArg t v, StaticCall x b) => StaticCall (P t x) (v -> b)
+    where _staticCall m args (P t x) val =
+            _staticCall m (jarg t val : args) x
+instance (JArg t v, StaticCallE x b) => StaticCallE (P t x) (v -> b)
+    where _staticCallE m args (P t x) val =
+            _staticCallE m (jarg t val : args) x
+instance (JArg t v, StaticCallX x b) => StaticCallX (P t x) (v -> b)
+    where _staticCallX m args (P t x) val =
+            _staticCallX m (jarg t val : args) x
+
+#define STATIC_CALL(TYPE, RESULT, RETURN, SAFE, UNSAFE) \
+    instance StaticCall TYPE (Java RESULT) where {\
+        _staticCall m a t = do safe <- getSafe ;\
+                               staticCall (if safe then SAFE \
+                                                   else UNSAFE) \
+                                          RETURN m a t }\
+    ;\
+    instance StaticCallE TYPE (Java (Either JThrowable RESULT)) where {\
+        _staticCallE m a t = do safe <- getSafe ;\
+                                staticCallE (if safe then SAFE \
+                                                     else UNSAFE) \
+                                            RETURN m a t }\
+    ;\
+    instance StaticCallX TYPE (Java RESULT) where {\
+        _staticCallX m a t = do safe <- getSafe ;\
+                                staticCallX (if safe then SAFE \
+                                                     else UNSAFE) \
+                                            RETURN m a t }
+
+STATIC_CALL(V, (),      return,  JNI.callStaticVoidMethod,
+                                 Unsafe.callStaticVoidMethod)
+STATIC_CALL(Z, Bool,    return,  JNI.callStaticBooleanMethod,
+                                 Unsafe.callStaticBooleanMethod)
+STATIC_CALL(C, Word16,  return,  JNI.callStaticCharMethod,
+                                 Unsafe.callStaticCharMethod)
+STATIC_CALL(B, Int8,    return,  JNI.callStaticByteMethod,
+                                 Unsafe.callStaticByteMethod)
+STATIC_CALL(S, Int16,   return,  JNI.callStaticShortMethod,
+                                 Unsafe.callStaticShortMethod)
+STATIC_CALL(I, Int32,   return,  JNI.callStaticIntMethod,
+                                 Unsafe.callStaticIntMethod)
+STATIC_CALL(J, Int64,   return,  JNI.callStaticLongMethod,
+                                 Unsafe.callStaticLongMethod)
+
+STATIC_CALL(F, Float,   (return . realToFrac),
+            JNI.callStaticFloatMethod, Unsafe.callStaticFloatMethod)
+STATIC_CALL(D, Double,  (return . realToFrac),
+            JNI.callStaticDoubleMethod, Unsafe.callStaticDoubleMethod)
+
+STATIC_CALL(X, (Maybe String), returnString,
+            JNI.callStaticStringMethod,Unsafe.callStaticStringMethod)
+STATIC_CALL(L, (Maybe JObject), returnObject,
+            JNI.callStaticObjectMethod, Unsafe.callStaticObjectMethod)
+STATIC_CALL(Q, (Maybe JObject), returnObject,
+            JNI.callStaticObjectMethod, Unsafe.callStaticObjectMethod)
+STATIC_CALL((A e), (Maybe (JArray e)), returnArray,
+            JNI.callStaticObjectMethod, Unsafe.callStaticObjectMethod)
+
+staticCall, staticCallX
+    :: (Ptr Core.JVM -> Ptr Core.JClassRef -> Ptr Core.JStaticMethodID
+        -> Ptr Core.JValues -> IO a)
+    -> (a -> Java b)
+    -> StaticH
+    -> [Core.JArg]
+    -> x
+    -> Java b
+staticCall callback convert m a t = staticCallE callback convert m a t
+    >>= either throwJavaException return
+
+staticCallE
+    :: (Ptr Core.JVM -> Ptr Core.JClassRef -> Ptr Core.JStaticMethodID
+        -> Ptr Core.JValues -> IO a)
+    -> (a -> Java b)
+    -> StaticH
+    -> [Core.JArg]
+    -> x
+    -> Java (Either JThrowable b)
+staticCallE callback convert m a t = staticCallX callback convert m a t
+    >>= check
+
+staticCallX callback convert (StaticH clazz method) args _ = do
+    vm <- getVM
+    safe <- getSafe
+
+    result <- io $ do
+        let mkValues = if safe then JNI.mkJValues else Unsafe.mkJValues
+        jvalues <- mkValues vm $ reverse args
+        jreturn <- withForeignPtr clazz $
+            \c -> callback vm c method jvalues
+        free jvalues
+        return jreturn
+
+    convert result
+
+
+callMethod :: (MethodCall p b)
+    => JMethod p
+    -> JObject
+    -> b
+callMethod (JMethod _ ptr t) object =
+    _methodCall (MethodH (jobjectPtr object) ptr) [] t
+
+callMethodE :: (MethodCallE p b)
+    => JMethod p
+    -> JObject
+    -> b
+callMethodE (JMethod _ ptr t) object =
+    _methodCallE (MethodH (jobjectPtr object) ptr) [] t
+
+callMethodX :: (MethodCallX p b) => JMethod p -> JObject -> b
+callMethodX (JMethod _ ptr t) object =
+    _methodCallX (MethodH (jobjectPtr object) ptr) [] t
+
+data MethodH = MethodH (ForeignPtr Core.JObjectRef) (Ptr Core.JMethodID)
+    deriving Show
+
+class MethodCall  a b | a -> b
+    where _methodCall  :: MethodH -> [Core.JArg] -> a -> b
+class MethodCallE a b | a -> b
+    where _methodCallE :: MethodH -> [Core.JArg] -> a -> b
+class MethodCallX a b | a -> b
+    where _methodCallX :: MethodH -> [Core.JArg] -> a -> b
+
+instance (JArg t v, MethodCall x b) => MethodCall (P t x) (v -> b)
+    where _methodCall m args (P t x) val =
+            _methodCall m (jarg t val : args) x
+instance (JArg t v, MethodCallE x b) => MethodCallE (P t x) (v -> b)
+    where _methodCallE m args (P t x) val =
+            _methodCallE m (jarg t val : args) x
+instance (JArg t v, MethodCallX x b) => MethodCallX (P t x) (v -> b)
+    where _methodCallX m args (P t x) val =
+            _methodCallX m (jarg t val : args) x
+
+#define METHOD_CALL(TYPE, RESULT, RETURN, SAFE, UNSAFE) \
+    instance MethodCall TYPE (Java RESULT) where {\
+        _methodCall m a t = do safe <- getSafe ;\
+                               methodCall (if safe then SAFE \
+                                                   else UNSAFE) \
+                                          RETURN m a t };\
+    \
+    instance MethodCallE TYPE (Java (Either JThrowable RESULT)) where {\
+        _methodCallE m a t = do safe <- getSafe ;\
+                                methodCallE (if safe then SAFE \
+                                                     else UNSAFE) \
+                                            RETURN m a t };\
+    \
+    instance MethodCallX TYPE (Java RESULT) where {\
+        _methodCallX m a t = do safe <- getSafe ;\
+                                methodCallX (if safe then SAFE \
+                                                     else UNSAFE) \
+                                            RETURN m a t }
+
+METHOD_CALL(V, (),      return,  JNI.callVoidMethod,
+                                 Unsafe.callVoidMethod)
+METHOD_CALL(Z, Bool,    return,  JNI.callBooleanMethod,
+                                 Unsafe.callBooleanMethod)
+
+METHOD_CALL(C, Word16,  return,  JNI.callCharMethod,
+                                 Unsafe.callCharMethod)
+METHOD_CALL(B, Int8,    return,  JNI.callByteMethod,
+                                 Unsafe.callByteMethod)
+METHOD_CALL(S, Int16,   return,  JNI.callShortMethod,
+                                 Unsafe.callShortMethod)
+METHOD_CALL(I, Int32,   return,  JNI.callIntMethod,
+                                 Unsafe.callIntMethod)
+METHOD_CALL(J, Int64,   return,  JNI.callLongMethod,
+                                 Unsafe.callLongMethod)
+
+METHOD_CALL(F, Float,   (return . realToFrac),
+            JNI.callFloatMethod, Unsafe.callFloatMethod)
+METHOD_CALL(D, Double,  (return . realToFrac),
+            JNI.callDoubleMethod, Unsafe.callDoubleMethod)
+
+METHOD_CALL(X, (Maybe String), returnString,
+            JNI.callStringMethod, Unsafe.callStringMethod)
+METHOD_CALL(L, (Maybe JObject), returnObject,
+            JNI.callObjectMethod, Unsafe.callObjectMethod)
+METHOD_CALL(Q, (Maybe JObject), returnObject,
+            JNI.callObjectMethod, Unsafe.callObjectMethod)
+METHOD_CALL((A e), (Maybe (JArray e)), returnArray,
+            JNI.callObjectMethod, Unsafe.callObjectMethod)
+
+methodCall, methodCallX
+    :: (Ptr Core.JVM -> Ptr Core.JObjectRef -> Ptr Core.JMethodID
+            -> Ptr Core.JValues -> IO a)
+    -> (a -> Java b)
+    -> MethodH
+    -> [Core.JArg]
+    -> x
+    -> Java b
+methodCall callback convert m a t = methodCallE callback convert m a t
+    >>= either throwJavaException return
+
+methodCallE
+    :: (Ptr Core.JVM -> Ptr Core.JObjectRef -> Ptr Core.JMethodID
+        -> Ptr Core.JValues -> IO a)
+    -> (a -> Java b)
+    -> MethodH
+    -> [Core.JArg]
+    -> x
+    -> Java (Either JThrowable b)
+methodCallE callback convert m a t =
+    methodCallX callback convert m a t >>= check
+
+methodCallX callback convert (MethodH object method) args _ = do
+    vm <- getVM
+    safe <- getSafe
+
+    result <- io $ do
+        let mkValues = if safe then JNI.mkJValues else Unsafe.mkJValues
+        jvalues <- mkValues vm $ reverse args
+        jreturn <- withForeignPtr object $
+            \obj -> callback vm obj method jvalues
+        free jvalues
+        return jreturn
+
+    convert result
+
+
+data JField a = JField (ForeignPtr Core.JClassRef) (Ptr Core.JFieldID)
+    deriving Show
+data JStaticField a = JStaticField (ForeignPtr Core.JClassRef)
+                                   (Ptr Core.JStaticFieldID)
+    deriving Show
+
+_getField :: Param a => (ForeignPtr Core.JClassRef -> Ptr x -> c a)
+          -> (Ptr Core.JVM -> Ptr Core.JClassRef -> CString -> CString
+                -> IO (Ptr x))
+          -> (Ptr Core.JVM -> Ptr Core.JClassRef -> CString -> CString
+                -> IO (Ptr x))
+          -> JClass
+          -> String
+          -> a
+          -> Java (Maybe (c a))
+_getField constructor safeGet unsafeGet (JClass clazz) name p = do
+    safe <- getSafe
+    vm   <- getVM
+
+    ptr <- io $ do
+        cname <- newCString name
+        csig  <- newCString $ fieldSignature p
+
+        let get = if safe then safeGet else unsafeGet
+        fieldID <- withForeignPtr clazz $ \p -> get vm p cname csig
+
+        free cname >> free csig
+        return fieldID
+
+    if ptr == nullPtr
+        then return (fail "No such field.")
+        else return $ return $ constructor clazz ptr
+
+getField :: Param a => JClass -> String -> a -> Java (Maybe (JField a))
+getField = _getField JField JNI.getFieldID Unsafe.getFieldID
+
+getStaticField :: Param a
+    => JClass
+    -> String
+    -> a
+    -> Java (Maybe (JStaticField a))
+getStaticField = _getField JStaticField JNI.getStaticFieldID
+                                        Unsafe.getStaticFieldID
+
+class Field a b | a -> b where
+    readStaticField :: JStaticField a -> Java b
+    writeStaticField :: JStaticField a -> b -> Java ()
+    readField :: JField a -> JObject -> Java b
+    writeField :: JField a -> JObject -> b -> Java ()
+
+#define FIELD(TYPE, RESULT, GETSS, GETS, GETSU, GETU, \
+                            SETSS, SETS, SETSU, SETU, READ, WRITE) \
+    instance Field TYPE RESULT where {\
+        readStaticField (JStaticField c fieldID) = do {\
+            vm <- getVM ; safe <- getSafe ;\
+            io (withForeignPtr c $ \p -> ((if safe then GETSS \
+                                                   else GETSU) vm p fieldID)) \
+            READ >>= return \
+        } ;\
+        writeStaticField (JStaticField c fieldID) v = do {\
+            vm <- getVM ; safe <- getSafe ;\
+            return v >>= WRITE \
+            io . (\t -> withForeignPtr c (\ptr -> \
+                     (if safe then SETSS else SETSU) vm ptr fieldID t)) \
+        } ;\
+        readField (JField _ fieldID) (JObject o) = do {\
+            vm <- getVM ; safe <- getSafe ;\
+            io (withForeignPtr o $ \p -> (if safe then GETS \
+                                                  else GETU) vm p fieldID) \
+            READ >>= return \
+        } ;\
+        writeField (JField _ fieldID) (JObject obj) v = do {\
+            vm <- getVM ; safe <- getSafe ;\
+            return v >>= WRITE \
+            io . (\t -> withForeignPtr obj (\ptr -> \
+                     (if safe then SETS else SETU) vm ptr fieldID t)) \
+        } \
+    }
+
+FIELD(Z, Bool, JNI.getStaticBooleanField, JNI.getBooleanField,
+               Unsafe.getStaticBooleanField, Unsafe.getBooleanField,
+               JNI.setStaticBooleanField, JNI.setBooleanField,
+               Unsafe.setStaticBooleanField, Unsafe.setBooleanField,,)
+FIELD(C, Word16, JNI.getStaticCharField, JNI.getCharField,
+                 Unsafe.getStaticCharField, Unsafe.getCharField,
+                 JNI.setStaticCharField, JNI.setCharField,
+                 Unsafe.setStaticCharField, Unsafe.setCharField,,)
+FIELD(B, Int8, JNI.getStaticByteField, JNI.getByteField,
+               Unsafe.getStaticByteField, Unsafe.getByteField,
+               JNI.setStaticByteField, JNI.setByteField,
+               Unsafe.setStaticByteField, Unsafe.setByteField,,)
+FIELD(S, Int16, JNI.getStaticShortField, JNI.getShortField,
+                Unsafe.getStaticShortField, Unsafe.getShortField,
+                JNI.setStaticShortField, JNI.setShortField,
+                Unsafe.setStaticShortField, Unsafe.setShortField,,)
+FIELD(I, Int32, JNI.getStaticIntField, JNI.getIntField,
+                Unsafe.getStaticIntField, Unsafe.getIntField,
+                JNI.setStaticIntField, JNI.setIntField,
+                Unsafe.setStaticIntField, Unsafe.setIntField,,)
+FIELD(J, Int64, JNI.getStaticLongField, JNI.getLongField,
+                Unsafe.getStaticLongField, Unsafe.getLongField,
+                JNI.setStaticLongField, JNI.setLongField,
+                Unsafe.setStaticLongField, Unsafe.setLongField,,)
+
+FIELD(D, Double, JNI.getStaticDoubleField, JNI.getDoubleField,
+                 Unsafe.getStaticDoubleField, Unsafe.getDoubleField,
+                 JNI.setStaticDoubleField, JNI.setDoubleField,
+                 Unsafe.setStaticDoubleField, Unsafe.setDoubleField,
+                $> realToFrac, return . realToFrac >>=)
+FIELD(F, Float, JNI.getStaticFloatField, JNI.getFloatField,
+                Unsafe.getStaticFloatField, Unsafe.getFloatField,
+                JNI.setStaticFloatField, JNI.setFloatField,
+                Unsafe.setStaticFloatField, Unsafe.setFloatField,
+                $> realToFrac, return . realToFrac >>=)
+
+instance Field L (Maybe JObject) where
+    readStaticField (JStaticField c fieldID) = do
+        vm <- getVM
+        safe <- getSafe
+        let readField = if safe then JNI.getStaticObjectField
+                                else Unsafe.getStaticObjectField
+        result <- io $ withForeignPtr c
+                     $ \ptr -> readField vm ptr fieldID
+        if result == nullPtr
+            then return Nothing
+            else do
+                let release = if safe then JNI.release
+                                      else Unsafe.release
+                io (newForeignPtr release result)
+                    >>= return . Just . JObject
+
+    writeStaticField (JStaticField c fieldID) Nothing = do
+        vm <- getVM
+        safe <- getSafe
+        let writeField = if safe then JNI.setStaticObjectField
+                                 else Unsafe.setStaticObjectField
+        io $ withForeignPtr c
+           $ \ptr -> writeField vm ptr fieldID nullPtr
+
+    writeStaticField (JStaticField c fieldID) (Just (JObject obj)) = do
+        vm <- getVM
+        safe <- getSafe
+        let writeField = if safe then JNI.setStaticObjectField
+                                 else Unsafe.setStaticObjectField
+        io $ withForeignPtr c
+           $ \clazz -> withForeignPtr obj
+           $ \value -> writeField vm clazz fieldID value
+
+    readField (JField _ fieldID) (JObject obj) = do
+        vm <- getVM
+        safe <- getSafe
+        let readField = if safe then JNI.getObjectField
+                                else Unsafe.getObjectField
+        result <- io $ withForeignPtr obj
+                     $ \ptr -> readField vm ptr fieldID
+        if result == nullPtr
+            then return Nothing
+            else do
+                let release = if safe then JNI.release
+                                      else Unsafe.release
+                io (newForeignPtr release result)
+                    >>= return . Just . JObject
+
+    writeField (JField _ fieldID) (JObject o) Nothing = do
+        vm <- getVM
+        safe <- getSafe
+        let writeField = if safe then JNI.setObjectField
+                                 else Unsafe.setObjectField
+        io $ withForeignPtr o
+           $ \this -> writeField vm this fieldID nullPtr
+
+    writeField (JField _ fieldID) (JObject o) (Just (JObject obj)) = do
+        vm <- getVM
+        safe <- getSafe
+        let writeField = if safe then JNI.setObjectField
+                                 else Unsafe.setObjectField
+        io $ withForeignPtr o
+           $ \this  -> withForeignPtr obj
+           $ \value -> writeField vm this fieldID value
+
+
+returnObject ptr = do
+    safe <- getSafe
+    io $ if ptr == nullPtr
+        then return $ fail "null returned"
+        else newForeignPtr (if safe then JNI.release else Unsafe.release) ptr
+                >>= return . return . JObject
+
+returnString ptr = io $ if ptr == nullPtr
+    then return $ fail "null returned instead of String object"
+    else peekCString ptr >>= \string -> free ptr >> return (return string)
+
+returnArray ptr = if ptr == nullPtr
+    then return $ fail "null returned"
+    else do
+        vm   <- getVM
+        safe <- getSafe
+
+        length <- io $ (if safe then JNI.getArrayLength
+                                else Unsafe.getArrayLength) vm ptr
+        ptr'   <- io $ newForeignPtr (if safe then JNI.release
+                                              else Unsafe.release) ptr
+        return $ return $ JArray length ptr'
+
+
+-- | Finds and loads a class.
+--
+-- Note that this function can indeed fail with an exception and
+-- may execute code from the class to be loaded inside the virtual
+-- machine.
+--
+-- This is due to the fact that @getClass@ is a translation of the
+-- @findClass@ function in the JNI which loads *and* resolves the class.
+-- If you want to get a class definition without resolving the class,
+-- use the method @loadClass(String,boolean)@ on a @ClassLoader@.
+--
+-- Here is an example of how to do that:
+--
+-- > main' = runJava $ do
+-- >     (Just classLoader) <- getClass "java.lang.ClassLoader"
+-- >     getSystemClassLoader <- classLoader `bindStaticMethod` "getSystemClassLoader"
+-- >         ::= object "java.lang.ClassLoader"
+-- >     (Just systemClassLoader) <- getSystemClassLoader
+-- > 
+-- >     loadClass <- classLoader `bindMethod` "loadClass"
+-- >         ::= string --> boolean --> object "java.lang.Class"
+-- >     (Just clazz) <- loadClass systemClassLoader "java.awt.EventQueue" False
+-- >     io$ print clazz
+getClass :: String
+            -- ^ The name of the class. This should be a name
+            -- as would be returned by the @getName()@ method
+            -- of the class object, for example
+            -- @java.lang.Thread$State@ or @java.util.Map@.
+         -> Java (Maybe JClass)
+            -- ^ Returns Just the JClass or Nothing, if
+            -- the class does not exist.
+getClass name = do
+    vm <- getVM
+    safe <- getSafe
+
+    ptr <- io $ do
+        cname <- newCString $ tr '.' '/' name
+        let findClass = if safe then JNI.findClass
+                                else Unsafe.findClass
+        ptr <- findClass vm cname
+        free cname
+        return ptr
+
+    if ptr == nullPtr
+        then return $ fail "class not found"
+        else io (newForeignPtr (if safe then JNI.release
+                                        else Unsafe.release) ptr)
+                >>= return . return . JClass
+
+
+isInstanceOf :: JObject -> JClass -> Java Bool
+-- ^ Check whether the given object is an instance of the
+-- given class.
+isInstanceOf (JObject objectPtr) (JClass classPtr) = do
+    vm <- getVM
+    safe <- getSafe
+    
+    let isInstanceOf = if safe then JNI.isInstanceOf
+                               else JNI.isInstanceOf
+
+    io $ withForeignPtr objectPtr
+       $ \obj -> withForeignPtr classPtr
+       $ \clazz -> isInstanceOf vm obj clazz
+
+------------------------------------------------------------------------
+-- More Documentation
+------------------------------------------------------------------------
+
+{- $medium_level_intro
+
+    The medium level interface tries to take all the pain from the JNI.
+    It automatically manages references (i.e. garbage collection) for
+    you and makes sure that all operations take place in the presence of
+    a virtual machine.
+
+    This module contains the 'Java' monad which basically wraps the IO
+    monad but allows for actions to be executed in a virtual machine.
+    Such actions on the other hand can only be executed within the Java
+    monad and not within the IO monad. See 'runJava', 'runJavaGUI', and
+    'initJava' for information on how to run a computation in the JVM.
+
+    Using the medium level interface you will need to obtain references
+    to classes and methods manually. You can avoid this by creating high
+    level bindings (effectively some glue code) via
+    "Foreign.Java.Bindings".
+-}
+
+{- $obtaining_references
+
+    In order to invoke methods in the virtual machine you first need a
+    reference of these methods. These can be retrieved via
+    'getMethod', 'getStaticMethod', 'bindMethod', and
+    'bindStaticMethod'. References to constructors can be obtained using
+    'getConstructor'. All of these functions require a class.
+    'getClass' will lookup and load Java classes.
+
+    Here is an example for calling @Thread.currentThread().getName()@
+    and printing the result.
+
+> import Foreign.Java
+>
+> main = runJava $ do
+>   (Just threadClass) <- getClass "java.lang.Thread"
+>   currentThread <- threadClass `bindStaticMethod`
+>                       "currentThread" ::= object "java.lang.Thread"
+>   getName <- threadClass `bindMethod` "getName" ::= string
+>
+>   (Just thread) <- currentThread
+>   (Just name) <- getName thread
+>
+>   io$ putStrLn name
+
+    NOTE: The boilerplate of retrieving class and method references can
+    be avoided by using the high level java bindings offered by
+    "Foreign.Java.Bindings".
+-}
+
+{- $calling_methods
+
+    All the functions that involve calling a method ('callMethod',
+    'callStaticMethod', and 'newObject') come in three versions: E, X,
+    and with no suffix.
+
+    The X functions will not check for exceptions. Use them if your
+    absolutely sure that you are calling a total function.
+
+    The E functions will check for exceptions and return a value of type
+    @Either JThrowable a@. A Left value is returned iff an exception
+    occured (carrying the exception thrown) whereas a Right value
+    carries the result of the function. Note that such a correct result
+    may be Nothing (which resembles the @null@ reference) or void
+    (i.e. unit: @()@).
+
+    The functions without any suffix will check for exceptions and throw
+    a Haskell exception. Throwing that exception will cause the
+    computation in the JVM to be cancelled. This means that it is not
+    possible to catch the exception within the Java monad, as the
+    computation will be cancelled already. You can however catch such
+    exceptions in the IO monad.
+
+    In general you should use E functions if a method throws any checked
+    exceptions and a function without suffix if a method does not throw
+    any checked exceptions. This way runtime exceptions will still be
+    propagated. If you know by heart that a function can not throw any
+    exceptions, neither checked nor unchecked exceptions, you can use
+    an X method, which is faster as it does not check for exceptions at
+    all. If however the method does throw an exception and you do not
+    check it, you are entering a world of pain.
+-}
+

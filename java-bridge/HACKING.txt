@@ -1,0 +1,259 @@
+Author  : Julian Fleischer
+
+Changes : 2013-05-28 First version
+          2013-06-01 Added *.cpphs
+          2013-06-03 +Roadmap, +Coding Guidelines, few quirks fixed
+
+
+What you should know up front
+=============================
+
+
+WORKSPACE REQUIREMENTS
+----------------------
+
+This library has proudly been built using a Terminal and VIM,
+which is all you need to start developing.
+
+( well, the Haskell Platform and a JDK would be necessary too,
+  but hey, you surely figured /that/. )
+
+
+
+USE OF PREPROCESSORS
+--------------------
+
+In order to reduce code duplication and enhance both the readability
+and the ease of writing code, two preprocessors are used throughout
+the package. They are defined in `Setup.hs'. Thus this package
+requires to be built with cabal.
+
+The following file types are specially treated:
+
+
+*.tpl
+    Used for Foreign.Java.JNI.{Safe|Unsafe}. Both of these files
+    are nearly identical to each other, except for having "safe"
+    or "unsafe" along foreign imports. A *.tpl file contains a
+    relative path to a template file and a list of key/value pairs.
+    The key/value pairs are replaced in the template and a regular
+    Haskell file is generated.
+
+    Example.tpl:
+    > ("example-template.hs", [("SAFETY"), ("safe")])
+
+    example-template.hs
+    > main = "This is the %SAFETY% version."
+
+    yields Example.hs:
+    > main = "This is the safe version."
+
+    The preprocessor is defined in `Setup.hs'
+    in the function `transformTpl'.
+
+
+*.hss
+    Haskell with syntactic sugar for multiline strings and
+    string interpolation. It allows for the following:
+
+    > aRatherComplexString :: String -> [String] -> Int -> String
+    > aRatherComplexString x y z = """
+    >     The arguments are
+    >         x = #{x}
+    >         y = #{unlines y}
+    >         z = #{show z}
+    >     """
+
+    The preprocessor is defined in `Setup.hs'
+    in the function `transformHss'.
+
+    HSS files are used wherever large amounts of dull string
+    processing are required, such as when generating code.
+
+
+*.cpphs
+    Haskell with cpp (c preprocessor) directives. This is mostly the
+    same as using the CPP extension (-XCPP). The CPPHS preprocessor
+    uses the implementation from the hackage package `cpphs').
+    The cpphs preprocessor allows for modern ansi features such as
+    stringification and token pasting (the CPP extension runs cpp in
+    traditional mode, which does not include modern ansi features).
+
+    cpphs is used through out this project to reduce the amount
+    or repetetive code and is considered a simpler alternative to
+    Template Haskell. -XCPP instead of cpphs is used wherever a
+    value from the outside (-D... -> #ifdef) is needed.
+
+    -> http://projects.haskell.org/cpphs/
+    -> http://hackage.haskell.org/package/cpphs
+
+
+
+WHAT GOES WHERE
+---------------
+
+src/ffijni.h src/foreign.c
+    Hand-written glue code for interfacing the FFI with the JNI.
+
+src/Foreign/Java/JNI/*.{tpl|hs}
+    These files contain the Core JNI binding.
+
+src/Foreign/Java.hs
+    This file contains the medium level API.
+
+src/Foreign/Java/Bindings.hss src/Foreign/Java/Bindings/...
+    These files contain functions for reflecting
+    Java classes and Haskell modules, and generating
+    high level glue code.
+
+src/Foreign/Java/Bindings/Support.cpphs
+    This file contains more-or-less private definitions
+    that are used by the generated Haskell modules only.
+    The module is public (that is "not hidden") so that
+    bindings can live in a package other than java-bridge.
+    It should however be considered an internal package.
+
+src/Foreign/Java/{all other files}
+    Utilities (Foreign.Java.{IO / Maybe / Print / ...})
+
+examples/
+    Examples. Don't forget to add files and executables in
+    java-bridge.cabal when adding examples or anything.
+    Most examples are not that impressive, but offer simple
+    tutorials of various aspects of the API of the java-bridge.
+
+hs2j/ j2hs/
+    The respective tools. Mostly boring code to orchestrate the
+    interplay of functions from Foreign.Java.Bindings.*
+
+GetProperty.java
+    This file is used for setup on Linux/Unix to retrieve system
+    properties form the JVM.
+
+Makefile
+    Does little more than calling cabal. Use as inspiration on how to
+    use cabal for building (which is really easy).
+
+Setup.hs
+    The project uses a Custom build type, which is defined in here.
+    Preprocessors and functions for finding libjvm live here.
+
+
+
+CODING GUIDELINES
+-----------------
+
+Please try to stick to a maximum line width of 80 characters, 72 if
+possible. Sometimes that limit is exceeded, however 100 characters
+should really never be reached. Thus:
+
+    Soft constraint:
+        72 characters per line.
+    Hard constraint:
+        80 characters per line.
+    Do-not-cross-never-ever:
+        100 characters.
+
+
+When defining methods that perform case analysis, use a case construct
+rather than multiple method definitions:
+
+GOOD:
+
+> function x = case x of
+>   C1 -> ...
+>   C2 -> ...
+
+BAD:
+
+> function C1 = ...
+> function C2 = ...
+
+This greatly enhances maintainability `plus` it safes a few keystrokes.
+
+
+
+DISTRIBUTION
+------------
+
+Due to the use of preprocessors the regular `cabal sdist' will fail.
+This seems to be a known bug. The workaround is to manually invoke the
+build script:
+
+$ ./dist/setup/setup sdist
+
+( you need to have invoked `cabal configure' first,
+  otherwise `setup' will not have been built yet. )
+
+-or-
+
+$ runhaskell Setup.hs sdist
+
+( note that on some machines this fails badly with a GHCi runtime error
+  (issues with linking), so it's probably better to compile and run
+  `setup', as shown above. )
+
+The matter has been discussed on stackoverflow:
+
+-> Haskell - Packaging cabal package with custom preprocessors
+   http://stackoverflow.com/q/16256987/471478
+
+
+Roadmap
+=======
+
+This section describes known issues that will be worked on.
+
+
+OS X (GUI) QUIRKS
+-----------------
+
+See also:
+
+-> Java JNI: Creating a Swing Window using JNI from C
+   http://stackoverflow.com/q/14661249/471478
+
+-> Linking a library with GHC and Cabal in Mac OS X
+   http://stackoverflow.com/q/16383988/471478
+
+Starting points:
+
+  Foreign.Java
+    -> runJavaGui and runJavaGui'
+  Foreign.Java.JNI.{Safe/Unsafe}
+    -> runCocoaMain :: IO ()
+  src/ffijni.c
+    -> void runCocoaMain()
+
+
+
+CLASS CACHE (ENHANCEMENT)
+-------------------------
+
+Would it speed things up if class references were cached in the Java
+monad? Currently every invocation of a method (especially in the high
+level bindings) does a new lookup.
+
+The medium level bindings are not affected.
+
+
+
+OVERHAUL *.hss PREPROCESSOR
+---------------------------
+
+The current implementation is uggly hackery. Overhaul and maybe release
+as a package in its own right.
+
+
+
+JAVADOC -> HADDOCK
+------------------
+
+It would be really great if the generated haddock documentation for the
+high level bindings would contain the javadoc of the translated classes
+and methods.
+
+
+
+
+

@@ -1,0 +1,358 @@
+{-# LANGUAGE Haskell2010
+    , TypeFamilies
+    , FlexibleContexts
+    , FlexibleInstances
+    , TypeSynonymInstances
+ #-}
+{-# OPTIONS
+    -Wall
+ #-}
+
+-- |
+-- Module       : Foreign.Java.Bindings.Support
+-- Copyright    : (c) Julian Fleischer 2013
+-- License      : MIT (See LICENSE file in cabal package)
+--
+-- Maintainer   : julian.fleischer@fu-berlin.de
+-- Stability    : experimental
+-- Portability  : non-portable (TypeFamilies)
+--
+-- This module provides type classes and instances for
+-- supporting the high level bindings. This module should
+-- not be imported directly.
+module Foreign.Java.Bindings where
+
+import Control.Monad.State hiding (void)
+
+import Data.Int
+import Data.Word
+import Data.Maybe
+
+import Foreign.Ptr
+import Foreign.ForeignPtr
+import Foreign.C.Types
+
+import Foreign.Java
+import Foreign.Java.JavaMonad
+import Foreign.Java.Types as T
+import qualified Foreign.Java.JNI.Safe as JNI
+import qualified Foreign.Java.JNI.Types as Core
+
+
+---------------
+-- Utilities --
+---------------
+
+
+object' :: String -> Q
+object' = T.object'
+
+
+------------------------------
+-- Primitive argument types --
+------------------------------
+
+class JBoolean a  where toBoolean :: a -> Java Bool
+class JChar a     where toChar    :: a -> Java Word16
+class JByte a     where toByte    :: a -> Java Int8
+class JShort a    where toShort   :: a -> Java Int16
+class JInt a      where toInt     :: a -> Java Int32
+class JLong a     where toLong    :: a -> Java Int64
+class JFloat a    where toFloat   :: a -> Java Float
+class JDouble a   where toDouble  :: a -> Java Double
+
+
+instance JBoolean Bool   where toBoolean = return
+
+instance JChar Char      where toChar = return . fromIntegral . fromEnum
+instance JChar Int8      where toChar = return . fromIntegral
+instance JChar Word16    where toChar = return
+
+instance JByte Int8      where toByte = return
+
+instance JShort Int8     where toShort = return . fromIntegral
+instance JShort Word8    where toShort = return . fromIntegral
+instance JShort Int16    where toShort = return
+
+instance JInt Int        where toInt = return . fromIntegral
+instance JInt Int8       where toInt = return . fromIntegral
+instance JInt Word8      where toInt = return . fromIntegral
+instance JInt Int16      where toInt = return . fromIntegral
+instance JInt Word16     where toInt = return . fromIntegral
+instance JInt Int32      where toInt = return
+
+instance JLong Int       where toLong = return . fromIntegral
+instance JLong Int8      where toLong = return . fromIntegral
+instance JLong Word8     where toLong = return . fromIntegral
+instance JLong Int16     where toLong = return . fromIntegral
+instance JLong Word16    where toLong = return . fromIntegral
+instance JLong Int32     where toLong = return . fromIntegral
+instance JLong Word32    where toLong = return . fromIntegral
+instance JLong Int64     where toLong = return
+
+instance JFloat CFloat   where toFloat = return . realToFrac
+instance JFloat Float    where toFloat = return
+
+instance JDouble CDouble where toDouble = return . realToFrac
+instance JDouble Double  where toDouble = return
+
+
+--------------------------
+-- Array argument types --
+--------------------------
+
+class Array a where
+    asMaybeArrayObject :: a -> Java (Maybe JObject)
+
+
+----------------------------
+-- Primitive result types --
+----------------------------
+
+#define PRIMITIVE_RESULT(NAME, TYPE) \
+    class NAME ## Result m where {\
+        to ## NAME ## Result :: Either JThrowable TYPE -> Java m }\
+    ;\
+    instance NAME ## Result TYPE where {\
+        to ## NAME ## Result = either (\exc -> toString exc >>= fail) return }\
+    ;\
+    instance NAME ## Result (Either JThrowable TYPE) where {\
+        to ## NAME ## Result = return }
+
+-- | The result of a function call that is of type @boolean@.
+PRIMITIVE_RESULT(Boolean, Bool)
+-- | The result of a function call that is of type @char@.
+PRIMITIVE_RESULT(Char, Word16)
+-- | The result of a function call that is of type @byte@.
+PRIMITIVE_RESULT(Byte, Int8)
+-- | The result of a function call that is of type @short@.
+PRIMITIVE_RESULT(Short, Int16)
+-- | The result of a function call that is of type @int@.
+PRIMITIVE_RESULT(Int, Int32)
+-- | The result of a function call that is of type @long@.
+PRIMITIVE_RESULT(Long, Int64)
+-- | The result of a function call that is of type @float@.
+PRIMITIVE_RESULT(Float, Float)
+-- | The result of a function call that is of type @double@.
+PRIMITIVE_RESULT(Double, Double)
+
+-- | The result of a function call that is of type @void@.
+class VoidResult m where
+    toVoidResult :: Either JThrowable () -> Java m
+    
+instance VoidResult () where
+    toVoidResult = either (\exc -> toString exc >>= fail) return
+
+instance VoidResult (Either JThrowable ()) where
+    toVoidResult = return
+    
+instance VoidResult (Maybe JThrowable) where
+    toVoidResult = return . either Just (const Nothing)
+
+
+------------------------
+-- Array result types --
+------------------------
+
+-- | An array result of a function call.
+class JavaArray (ArrayResultType m) (ArrayResultComponent m) => ArrayResult m where
+    -- | The JVM machine type of the components of the array.
+    type ArrayResultType m
+
+    -- | The type of the component of the array as returned by
+    -- the low level JNI call.
+    type ArrayResultComponent m
+
+    -- | Convert the array to a sophisticated type.
+    toArrayResult :: Either JThrowable (Maybe (JArray (ArrayResultType m))) -> Java m
+
+instance ArrayResult a => ArrayResult (Either JThrowable a) where
+    type ArrayResultType (Either JThrowable a) = ArrayResultType a
+    type ArrayResultComponent (Either JThrowable a) = ArrayResultComponent a
+
+    toArrayResult = either (return . Left) (toArrayResult . Right)
+
+#define ARRAY_RESULT(TYPE, PRIM) \
+    instance ArrayResult [TYPE] where {\
+        type ArrayResultType [TYPE] = T.PRIM ;\
+        type ArrayResultComponent [TYPE] = TYPE ;\
+        \
+        toArrayResult = either (\exc -> toString exc >>= fail) \
+                               (maybe (return []) toList) }
+
+ARRAY_RESULT(Bool,   Z)
+ARRAY_RESULT(Word16, C)
+ARRAY_RESULT(Int8,   B)
+ARRAY_RESULT(Int16,  S)
+ARRAY_RESULT(Int32,  I)
+ARRAY_RESULT(Int64,  J)
+ARRAY_RESULT(Float,  F)
+ARRAY_RESULT(Double, D)
+
+
+instance ArrayResult [Char] where
+    type ArrayResultType [Char] = T.C
+    type ArrayResultComponent [Char] = Word16
+
+    toArrayResult = either (\exc -> toString exc >>= fail)
+                           (maybe (return [])
+                                  (fmap (map (toEnum . fromIntegral)) . toList))
+
+instance ArrayResult [String] where
+    type ArrayResultType [String] = T.L
+    type ArrayResultComponent [String] = Maybe JObject
+
+    toArrayResult =
+        either (\exc -> toString exc >>= fail)
+               (maybe (return [])
+                      (\arr -> toList arr >>= mapM (maybe (return "") toString)))
+
+
+
+-----------------------
+-- All other objects --
+-----------------------
+
+
+-- | The result of a function call that is of type @object@.
+class ObjectResult m where
+    -- | 
+    toObjectResult :: Either JThrowable (Maybe JObject) -> Java m
+
+instance UnsafeCast a => ObjectResult (Value JThrowable a) where
+    toObjectResult = either (return . Fail)
+                            (maybe (return NoValue)
+                                   (fmap Value . unsafeFromJObject))
+
+instance UnsafeCast a => ObjectResult (Either (Maybe JThrowable) a) where
+    toObjectResult = either (return . Left . Just)
+                            (maybe (return (Left Nothing))
+                                   (fmap Right . unsafeFromJObject))
+
+instance UnsafeCast a => ObjectResult (Either JThrowable (Maybe a)) where
+    toObjectResult = either (return . Left)
+                            (fmap Right . maybe (return Nothing)
+                                                (fmap Just . unsafeFromJObject))
+
+instance UnsafeCast a => ObjectResult (Maybe a) where
+    toObjectResult = either (\exc -> toString exc >>= fail)
+                            (maybe (return Nothing)
+                                   (fmap Just . unsafeFromJObject))
+
+instance ObjectResult [Char] where
+    toObjectResult = either (\exc -> toString exc >>= fail)
+                            (maybe (return "null") toString)
+
+
+---------------------------------------------------
+-- Advanced features (Callbacks, Subtyping, ...) --
+---------------------------------------------------
+
+
+-- | A convenient alternative to 'isInstanceOf'.
+--
+-- Minimal complete definition: 'coerce' or 'whenInstanceOf'.
+class InstanceOf a where
+    type CoercedType a
+
+    -- | Check if the object of type @a@ is an instance
+    -- of the type represented by @b@. 
+    instanceOf :: JavaObject o => o -> a -> Java Bool
+
+    -- | Check if the object of type @a@ is an instance
+    -- of the type @c@, represented by @b@. If so, it will coerce
+    -- the object of type @a@ and pass it to the given action.
+    --
+    -- If @a@ was an instance of @c@ (where @c@ is represented
+    -- by @b@) this function will return @'Just' d@, where @d@ is
+    -- the result of the optional computation. If not, 'Nothing'
+    -- is returned.
+    whenInstanceOf :: JavaObject o => o -> a -> (CoercedType a -> Java d) -> Java (Maybe d)
+
+    -- | Coerces the given object of type @a@ to an object of
+    -- @c@, where @c@ is represented by a value of type @b@.
+    -- Returns @'Nothing'@ if this is not possible.
+    coerce :: JavaObject o => o -> a -> Java (Maybe (CoercedType a))
+
+    instanceOf o t =
+        whenInstanceOf o t (return . const ())
+            >>= return . maybe False (const True)
+
+    whenInstanceOf o t a =
+        coerce o t >>= maybe (return Nothing) (fmap Just . a)
+
+    coerce o t = whenInstanceOf o t return
+
+-- | For INTERNAL use only. Is however not in a hidden module,
+-- so that other libraries can link against it.
+class UnsafeCast a where
+    -- | For INTERNAL use only. Do not use yourself.
+    unsafeFromJObject :: JObject -> Java a
+
+
+
+---------------
+-- Callbacks --
+---------------
+
+
+registerCallbacks :: Core.JClass -> Java Bool
+-- ^ Yepp. Register callbacks. Do it.
+registerCallbacks (Core.JClass ptr) = do
+    vm <- getVM
+    io $ withForeignPtr ptr $ \clazz -> JNI.registerCallbacks vm clazz
+
+-- | A wrapped function can be used as a callback from the
+-- JVM into the Haskell runtime environment.
+type WrappedFun = Ptr Core.JVM -- Ptr to JEnv
+               -> Ptr Core.JObjectRef -- Ptr to this, a proxy
+               -> Ptr Core.JObjectRef -- Ptr to method, the requested method
+               -> Ptr Core.JObjectRef -- Ptr to a JObject-Array (Object[]), the arguments
+               -> IO (Ptr Core.JObjectRef) -- Returns a pointer to the result
+
+
+runJava_ :: Ptr Core.JVM -> Java a -> IO a
+runJava_ vm f = runStateT (_runJava f) (newJVMState vm) >>= return . fst
+
+foreign import ccall safe "wrapper"
+    wrap_ :: WrappedFun -> IO (FunPtr WrappedFun)
+
+foreign export ccall freeFunPtr :: FunPtr WrappedFun -> IO ()
+
+
+freeFunPtr :: FunPtr WrappedFun -> IO ()
+freeFunPtr ptr = freeHaskellFunPtr ptr
+
+
+wrap :: Java () -> IO (FunPtr WrappedFun)
+wrap f = do
+
+    let func vm _self _method _args = do
+            runJava_ vm f
+            return nullPtr
+            
+    func' <- wrap_ func
+
+    return func'
+
+intify :: Java () -> IO Int64
+intify = fmap (fromIntegral . ptrToIntPtr . castFunPtrToPtr) . wrap
+
+
+sushimaki :: String -> Java () -> Java JObject
+sushimaki ifaceName func = do
+    iface <- getClass ifaceName >>= asObject . fromJust
+    (Just clazz) <- getClass "HFunction"
+    _success <- registerCallbacks clazz
+    makeFunction <- clazz `bindStaticMethod` "makeFunction"
+        ::= object "java.lang.Class" --> long --> object "java.lang.Object"
+    (Just impl) <- io (intify func) >>= makeFunction (Just iface)
+    return impl
+
+
+delete :: Core.JObject -> Java ()
+delete (Core.JObject ptr) = io $ do
+    finalizeForeignPtr ptr
+
+
+

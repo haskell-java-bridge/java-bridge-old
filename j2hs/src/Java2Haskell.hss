@@ -1,0 +1,324 @@
+{-# LANGUAGE Haskell2010
+ #-}
+{-# OPTIONS
+    -Wall
+    -fno-warn-name-shadowing
+ #-}
+
+{- | The @j2hs@ command - create Haskell bindings for Java classes.
+    
+-}
+module Java2Haskell where
+
+import Prelude hiding (print)
+
+import Options
+import Bindings
+import Utils
+
+import Foreign.Java
+import Foreign.Java.Utils
+import Foreign.Java.IO
+
+import Language.Java.Reflect
+
+import Data.NamedRecord
+import qualified Data.List as L
+import Data.Strings
+
+import Data.Generics
+
+import Data.Bimap (Bimap)
+import Data.Map (Map)
+import Data.MultiMap (MultiMap)
+import Data.Set (Set)
+import qualified Data.Map as Map
+import qualified Data.Set as Set
+import qualified Data.MultiMap as MultiMap
+
+import Control.Monad
+import Control.Monad.IO.Class
+
+import System.Directory
+import System.FilePath
+import System.IO hiding (print)
+import System.Exit
+
+ifVerbose
+    :: MonadIO m
+    => Options
+    -> String
+    -> m ()
+ifVerbose opts = when (opts `get` optVerbose) . liftIO . putStr
+
+j2hs
+    :: Options
+    -> [String]
+    -> IO ()
+j2hs opts args = do
+
+    classpath <- mapM canonicalizePath $ opts `get` optClasspath
+    targetDir <- return (opts `get` optTargetDirectory)
+    let reflectDump_ = opts `get` optLoadReflectDump
+    reflectDump <- if null reflectDump_
+        then return Nothing
+        else canonicalizePath reflectDump_ >>= return . Just
+
+    let classpath' = concat $ L.intersperse ":" classpath
+        indent     = ("  " ++)
+
+    ifVerbose opts """
+        Classpath:
+        #{concatMap (\x -> "  " ++ x ++ "\n") (classpath)}"""
+    print "Initializing JVM..."
+    initJava ["""-Djava.class.path=#{classpath'}"""]
+    println " Done."
+    
+    unless (null args) $ runJava $ do
+        io $ do
+            ifVerbose opts """
+                Target Directory:
+                  #{targetDir}
+                """
+            createDirectoryIfMissing True targetDir
+            setCurrentDirectory targetDir
+            
+        ifVerbose opts """
+            Looking for Java classes:
+            #{concatMap (\x -> "  " ++ x ++ "\n") args}"""
+
+        -- Gather all classes that need to be translated
+        print "Looking up classes..."
+        classes  <- findClasses (opts `get` optSearchDepth) args
+
+        println """ #{show $ length classes} found."""
+        ifVerbose opts $
+            unlines (map indent classes)
+
+        -- Calculate the Haskell module names for packages and classes
+        let packages = Set.toList $ Set.fromList
+                     $ map (maybe "" id . takePackageName) classes
+
+            -- temporary class names
+            classModules_ = foldr (uncurry g) xEmpty $ map f classes
+              where f x = (x, makeClassModuleName x)
+                    g clazzName modName all = xInsert clazzName newName all
+                      where newName = head $ dropWhile (`xMemberR` all)
+                                           $ iterate (++ "_") modName
+
+            -- package names.
+            -- This func keeps in mind that package names must not clash with class names.
+            packageModules = foldr (uncurry g) xEmpty $ map f packages
+              where f x = (x, makePackageModuleName x)
+                    g pkgName modName all = xInsert pkgName newName all
+                      where newName = head $ dropWhile (\n -> n `xMemberR` classModules_
+                                                           || n `xMemberR` all)
+                                           $ iterate (++ "Package") modName
+
+            -- finally the class names.
+            -- This func keeps in mind that the package names might have been augmented
+            -- before. i.e. the package java.awt.image will be Java.Awt.ImagePackage now,
+            -- thus all classes inside the package have their full name changed too.
+            classModules :: Map String String
+            classModules = Map.fromList $ map f $ xToList classModules_
+              where f (clazzName, moduleName)
+                        = (clazzName, joinClassName (newPackageName, classModuleName))
+                      where classModuleName = takeClassName moduleName
+                            packageName = maybe "" id $ takePackageName clazzName
+                            newPackageName = packageModules `xGet` packageName
+
+            -- A mapping from packages to classes
+            classesByPackage :: MultiMap String String
+            classesByPackage = MultiMap.fromList
+                             $ map (\clazz -> (fst $ splitClassName clazz, clazz)) classes
+
+            -- The list of hidden modules
+            hiddenModules = map (++ "__") $ Map.elems classModules
+
+        classInfo <- gatherClassInfo opts reflectDump classModules
+
+        findJavaCore classesByPackage classInfo
+
+        when (opts `get` optOnlyReflect) $ io $ do
+            mapM_ println $ Map.elems classInfo
+            exitSuccess
+
+        generateModules opts classInfo classesByPackage classModules packageModules hiddenModules
+
+    return ()
+
+{-
+findJavaCore2
+    :: Map String JavaClass
+    -> Java ()
+findJavaCore2 classInfo = do
+
+    let classes = 
+-}
+
+findJavaCore
+    :: MultiMap String String
+    -> Map String JavaClass
+    -> Java ()
+findJavaCore classesByPackage classInfo = do
+
+    let packageDependencies :: Map String (Set String)
+        packageDependencies = Map.map findDependencies (MultiMap.toMap classesByPackage)
+          where
+            findDependencies classes = Set.fromList packageDependencies
+              where
+                dependencies = concatMap (classDependencies . (classInfo Map.!)) classes
+                packageDependencies = map (fst . splitClassName) dependencies
+
+        resolve :: Set String -> Set String
+        resolve = Set.fromList . concatMap (Set.toList . (packageDependencies Map.!)) . Set.toList
+
+        fullPackageDependencies = Map.map (exhaustively resolve) packageDependencies
+
+        coreJava = intersections (Map.elems fullPackageDependencies)
+
+    println (show $ Set.size coreJava)
+    println (Set.toList coreJava)
+
+    forM_ (Map.toList fullPackageDependencies) $ \(pkg, deps) -> do
+        let deps' = (deps Set.\\ coreJava)
+        print """
+            #{pkg}, #{show $ Set.size deps'} (#{show $ Set.size deps}) dependencies:
+              """
+        println $ Set.toList deps'
+
+
+-- Gather information about classes via Reflection
+-- or (depending on the opts set) from a dump file.
+gatherClassInfo
+    :: Options
+    -> Maybe FilePath
+    -> Map String String
+    -> Java (Map String JavaClass)
+gatherClassInfo opts reflectDump classModules = do
+
+    print """Gathering refection information..."""
+    let classNames = Map.keys classModules
+        updName name clazz = (name, clazz { classModName = classModules Map.! name })
+
+        getClassInfo :: Java (Map String JavaClass)
+        getClassInfo = Map.fromList
+            `fmap` map (uncurry updName)
+            `fmap` zip classNames
+            `fmap` everywhere (mkT (\(TyVar v) -> TyVar ('_':v)))
+            `fmap` reflectClasses classNames
+
+        readClassInfo :: String -> Java (Map String JavaClass)
+        readClassInfo reflectFile = io $ do
+            file <- openFile reflectFile ReadMode
+            contents <- hGetContents file
+            let contents' = read contents
+            result <- contents' `seq` return contents'
+            hClose file
+            return result
+            
+    classInfo <- maybe getClassInfo (\f -> print " (from dump)" >> readClassInfo f) reflectDump
+    println " Done."
+
+    unless (null (opts `get` optSaveReflectDump)) $ io $ do
+        file <- openFile (opts `get` optSaveReflectDump) WriteMode
+        print """Saving dump of reflection info..."""
+        hPutStr file (show classInfo)
+        println " Done."
+        hClose file
+
+    return classInfo
+
+
+-- This creates a graphviz file which can be used to
+-- visualize inter-package dependencies
+visualizeDependencies
+    :: Map String (Set String)
+    -> IO ()
+visualizeDependencies packageDependencies = do
+
+    file <- openFile "dependencies.neato" WriteMode
+    hPutStrLn file """digraph G {\n  overlap = false;"""
+
+    forM_ (Map.toList packageDependencies) $ \(pkg, deps) -> do
+        forM_ (Set.toList deps) $ \dep -> do
+            let augment = map (\x -> if x == '.' then '_' else x)
+                pkg' = augment pkg
+                dep' = augment dep
+            hPutStr file """  #{pkg'} -> #{dep'}\n"""
+
+    hPutStrLn file """}"""
+    hClose file
+
+-- This actually creates the Haskell module files
+generateModules
+    :: Options
+    -> Map String JavaClass
+    -> MultiMap String String
+    -> Map String String
+    -> Bimap CaseInsensitiveString CaseInsensitiveString
+    -> [String]
+    -> Java ()
+generateModules opts classInfo classesByPackage classModules packageModules hiddenModules = do
+
+    println """Generating modules for #{show $ Map.size classModules} classes in \
+               #{show $ xSize packageModules} packages..."""
+
+    -- A list of all modules
+    let allModules = xKeysR packageModules ++ Map.elems classModules
+
+    -- Create all the package files.
+    -- These contain the Java classes as Haskell types.
+    forM_ (xToList packageModules) $ \(packageName, packageMod) -> do
+        let dirName = strJoin [pathSeparator] (strSplitAll "." packageMod)
+
+        -- Create the directory for the package
+        io $ do 
+            createDirectoryIfMissing True dirName
+
+            let classes = map (classInfo Map.!)
+                              (MultiMap.lookup packageName classesByPackage)
+
+            -- Create the Haskell module file for the Java package
+            file <- openFile (dirName ++ ".hs") WriteMode
+            hPutStrLn file
+              $ printJavaPackageModule packageName packageMod classInfo classes
+            hClose file
+
+    -- Create all the class files.
+    -- These contain the java methods as Haskell functions.
+    forM_ (Map.toList classModules) $ \(clazzName, clazzMod) -> do
+        let fileName = strJoin [pathSeparator] (strSplitAll "." clazzMod)
+            clazz = classInfo Map.! clazzName
+
+        io $ do
+            -- Create the Haskell module file for the Java class.
+            file <- openFile (fileName ++ ".hs") WriteMode
+            hPutStrLn file $ printJavaClassModule clazz clazzMod classInfo
+            hClose file
+
+            -- Create the *hidden* Haskell module file for the Java class.
+            file <- openFile (fileName ++ "__.hs") WriteMode
+            hPutStrLn file $ printJavaClassModule' clazz clazzMod classInfo
+            hClose file
+
+    -- write Cabal file
+    when (opts `get` optCabalProject) $ io $ do
+        cabalFile <- openFile ((opts `get` optProjectName) ++ ".cabal") WriteMode
+        hPutStrLn cabalFile """
+            name:           #{opts `get` optProjectName}
+            version:        #{opts `get` optProjectVersion}
+            cabal-version:  >= 1.8
+            build-type:     Simple
+            
+            Library {
+             build-depends:
+              base >= 4 && < 5,
+              java-bridge
+             exposed-modules:
+              #{strJoin ",\n  " allModules}
+             other-modules:
+              #{strJoin ",\n  " hiddenModules} }
+            """
+        hClose cabalFile
+

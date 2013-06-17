@@ -1,0 +1,10 @@
+.DS_Store
+.*.swp
+dist
+_darcs
+*.o
+*.hi
+*.aux
+*.ent
+*.log
+*.toc

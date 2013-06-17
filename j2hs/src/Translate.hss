@@ -1,0 +1,286 @@
+{-# LANGUAGE Haskell2010 #-}
+
+module Translate where
+
+import Typomatic
+
+import Foreign.Java.Utils
+import Data.Map (Map)
+
+import Language.Haskell.Reflect
+import Language.Java.Reflect
+
+import Data.Function
+
+import qualified Data.Char as Char
+import qualified Data.List as List
+import qualified Data.Set  as Set
+import qualified Data.Map  as Map
+
+import qualified Data.List.HIUtils as HI
+
+import Control.Arrow
+
+pkgModExports :: Map String JavaClass -> [JavaClass] -> String
+pkgModExports info classes = concatMap (\(t, b) -> """    -- * #{show t}s\n#{b}""")
+        $ map (second $ concatMap format)
+        $ HI.aggregateAL
+        $ zip (map classType classes) classes
+  where
+    format clazz =
+        let haskName  = takeClassName $ classModName clazz
+            javaName  = className clazz
+            dataDecl  = if classIface clazz then "" else
+                """    #{dataTName haskName} (..),\n"""
+        in """
+            -- ** #{show $ classType clazz} #{javaName}
+            -- | For constructors, methods, and so on, see: "#{classModName clazz}".
+            #{tyclTName haskName},
+        #{dataDecl}\
+            #{newtTName haskName} #{if classEnum clazz then "(..)" else ""},
+        """
+
+
+pkgModImports :: Map String JavaClass -> [JavaClass] -> String
+pkgModImports info classes = concatMap (format . classModName) classes
+  where format modName = """import #{modName}__ hiding (info')\n"""
+
+
+pkgModDecl :: Map String JavaClass -> [JavaClass] -> String
+pkgModDecl info classes = ""
+
+
+-- Modules and Boot files
+  
+classBootExports :: Map String JavaClass -> JavaClass -> String
+classBootExports info clazz = ""
+
+
+classBootImports :: Map String JavaClass -> JavaClass -> String
+classBootImports info clazz = ""
+
+
+classModImports :: Map String JavaClass -> JavaClass -> String
+classModImports info clazz = concatMap format references
+  where
+    format package = """import qualified #{package}\n"""
+    references = Set.toList
+        $ Set.map (fst . splitClassName . classModName . check . flip Map.lookup info)
+        $ Set.fromList (classFullName clazz : dependencies)
+    dependencies = classDependencies clazz
+    check = maybe (error """
+        classModImports in Foreign.Java.Bindings.Java2Haskell \
+        - class definition not found""") id
+
+
+classBootDecl :: Map String JavaClass -> JavaClass -> String
+classBootDecl info clazz = """
+    """
+
+classModExports :: Map String JavaClass -> JavaClass -> String
+classModExports info clazz = "    -- * Methods\n" ++ concatMap methodExport methodNames
+  where
+    methods = List.sortBy (compare `on` methodName) (classMethods clazz)
+    methodNames = mkMethodNames methods
+    methodExport name = name ++ ",    \n"
+
+
+classModDecl :: Map String JavaClass -> JavaClass -> String
+classModDecl info clazz = concatMap methodDecl $ zip methodNames methods
+  where
+    methods = List.sortBy (compare `on` methodName) (classMethods clazz)
+    methodNames = mkMethodNames methods
+    methodDecl (name, method)
+        | arrayTypes = """
+            #{name} :: #{signature}
+            #{name} = Prelude.undefined
+            """
+        | otherwise = """
+            #{haddock}
+            #{name} :: #{signature}
+            #{name}#{argsDecl} = do
+                (Prelude.Just clazz) <- JNI.getClass "#{classFullName clazz}"
+                (Prelude.Just method) <- clazz `JNI.#{getMethod}` #{jniSignature}
+            #{thisArg}\
+            #{readArgs}\
+                result <- JNI.#{callMethod} method #{argsRefs}
+                #{convertResult} result
+            """
+      where
+        arrayTypes
+--            | any isArrayType (methodParams method) = True
+            | (Just ret) <- fst (methodReturnType method) = isArrayType ret
+            | otherwise = False
+        isArrayType x = case x of JArr _ -> True ; _ -> False
+        isStatic = methodStatic method
+        javaSignature = fJavaSignature argsInfo
+        javaReturnType = fJavaReturnType argsInfo
+        jniSignature = fJniSignature argsInfo
+        signature = fSignature argsInfo
+        getMethod = if isStatic then "getStaticMethod" else "getMethod"
+        callMethod = if isStatic then "callStaticMethodE" else "callMethodE"
+        args = fArgNames argsInfo
+        argsNotThis = (if isStatic then id else tail) args
+        argsInfo = runTypomatic info (typomatic clazz method)
+        argsDecl = concatMap (' ':) args
+        argsRefs = concatMap (++ "' ") args
+        haddock = """
+            -- | @#{if isStatic then "static " else "virtual "}\
+            #{if methodSynchronized method then "synchronized " else ""}\
+            #{if methodNative method then "native " else ""}\
+            #{if methodFinal method then "final " else ""}\
+            #{javaSignature} -> #{javaReturnType}@"""
+        thisArg = if isStatic then "" else """    #{head args}' <- JNI.asObject #{head args}\n"""
+        readArgs = concatMap (("    " ++). uncurry readArg) (zip argsNotThis (map fst $ methodParams method))
+        readArg name jtype = case jtype of
+            JBoolean -> """#{name}' <- JNIS.toBoolean #{name}\n"""
+            JChar    -> """#{name}' <- JNIS.toChar #{name}\n"""
+            JByte    -> """#{name}' <- JNIS.toByte #{name}\n"""
+            JShort   -> """#{name}' <- JNIS.toShort #{name}\n"""
+            JInt     -> """#{name}' <- JNIS.toInt #{name}\n"""
+            JLong    -> """#{name}' <- JNIS.toLong #{name}\n"""
+            JFloat   -> """#{name}' <- JNIS.toFloat #{name}\n"""
+            JDouble  -> """#{name}' <- JNIS.toDouble #{name}\n"""
+            JObj _   -> """#{name}' <- Prelude.Just <$> JNI.asObject #{name}\n"""
+            JArr _   -> """#{name}' <- JNIS.asMaybeArrayObject #{name}\n"""
+        convertResult = ("JNIS." ++) $ case fst (methodReturnType method) of
+            Nothing -> "toVoidResult"
+            Just t -> case t of
+                JBoolean -> "toBooleanResult"
+                JChar    -> "toCharResult"
+                JByte    -> "toByteResult"
+                JShort   -> "toShortResult"
+                JInt     -> "toIntResult"
+                JLong    -> "toLongResult"
+                JFloat   -> "toFloatResult"
+                JDouble  -> "toDoubleResult"
+                JObj n   -> "toObjectResult"
+                JArr c   -> "toArrayResult"
+
+        
+
+mkMethodNames :: [JavaMethod] -> [String]
+mkMethodNames = concatMap (zipWith (flip (++)) (iterate (++"'") ""))
+                . List.group . map sanitize . map methodName
+  where
+    sanitize name
+        | Char.isUpper (head name) = '_' : name
+        | name `elem` haskellKeywords = name ++ "'"
+        | otherwise = name
+
+
+-- Hidden Modules and Boot files
+
+
+classModExports' :: Map String JavaClass -> JavaClass -> String
+classModExports' info clazz = """
+        #{tyclTName haskName},
+        #{dataTName haskName} (..),
+        #{newtTName haskName} #{if classEnum clazz then "(..)" else ""},
+    """
+  where
+    haskName = takeClassName $ classModName clazz
+    javaName = className clazz
+
+
+classBootExports' :: Map String JavaClass -> JavaClass -> String
+classBootExports' info clazz = """
+        #{tyclTName haskName},
+        #{dataTName haskName} (..),
+        #{newtTName haskName},
+    """
+  where
+    haskName = takeClassName $ classModName clazz
+    javaName = className clazz
+
+
+classBootImports' :: Map String JavaClass -> JavaClass -> String
+classBootImports' info clazz
+    = concatMap (format . classModName) supertypes
+  where
+    format modName = """import qualified #{modName}__\n"""
+    supertypes = map (check . flip Map.lookup info)
+               $ Set.toList
+               $ Set.fromList (classParents clazz ++ classIfaces clazz)
+    check = maybe (error """
+        classBootImports' in Foreign.Java.Bindings.Java2Haskell \
+        - class definition not found""") id
+
+
+classModImports' :: Map String JavaClass -> JavaClass -> String
+classModImports' info clazz = ""
+
+
+classBootDecl' :: Map String JavaClass -> JavaClass -> String
+classBootDecl' info clazz
+    | classEnum clazz = """
+        class #{tyclTDecl}
+        data #{newtTDecl} = #{enumConstants}
+        data #{dataTDecl} = #{dataCDecl}
+        """
+    | otherwise = """
+        class #{tyclTDecl}
+        newtype #{newtTDecl} = #{newtCDecl} JNI.JObject
+        data #{dataTDecl} = #{dataCDecl}
+        """
+  where baseName  = takeClassName $ classModName clazz
+        params    = concatMap (\(p:ps) -> ' ' : Char.toLower p : ps)
+                      $ map (tyVarName . paramName) $ classTypeParams clazz
+        newtTDecl = newtTName baseName ++ params
+        newtCDecl = newtCName baseName
+        dataTDecl = dataTName baseName ++ params
+        dataCDecl = dataCName baseName ++ params
+        tyclTDecl = """(JNI.JavaObject this#{context}) => #{tyclTName baseName} this"""
+        context = concatMap parentContext (classParents clazz)
+        parentContext parent = """, #{qualifiedName} this"""
+          where parentClass = info Map.! parent
+                modName = classModName parentClass
+                qualifiedName = modName ++ "__." ++ (tyclTName $ takeClassName modName)
+        enumConstants = concat $ List.intersperse " | " $ map sanitize $ map snd $ classEnumConstants clazz
+          where sanitize (x:xs) = Char.toUpper x : xs
+
+
+classModDecl' :: Map String JavaClass -> JavaClass -> String
+classModDecl' info clazz
+    | classEnum clazz = """
+        instance JNI.JavaObject (#{newtTDecl}) where
+            asObject = Prelude.undefined
+        instance #{tyclTName baseName} (#{newtTDecl})
+        instance JNIS.InstanceOf (#{dataTDecl}) where
+            type CoercedType (#{dataTDecl}) = (#{newtTDecl})
+        #{instances}
+        """
+    | otherwise = """
+        instance JNI.JavaObject (#{newtTDecl}) where
+            asObject (#{newtCName baseName} obj) = return obj
+        instance JNIS.UnsafeCast (#{newtTDecl}) where
+            unsafeFromJObject obj = return (#{newtCDecl} obj)
+        instance #{tyclTName baseName} (#{newtTDecl})
+        instance JNIS.InstanceOf (#{dataTDecl}) where
+            type CoercedType (#{dataTDecl}) = (#{newtTDecl})
+            coerce o t = do
+                obj <- JNI.asObject o
+                (Prelude.Just clazz) <- JNI.getClass "#{fullClassName}"
+                isInstanceOf <- obj `JNI.isInstanceOf` clazz
+                if isInstanceOf
+                    then Prelude.Just <$> (JNIS.unsafeFromJObject obj)
+                    else return Prelude.Nothing
+        #{instances}
+        """
+  where fullClassName = classFullName clazz
+        baseName  = takeClassName $ classModName clazz
+        params    = concatMap (\(p:ps) -> ' ' : Char.toLower p : ps)
+                      $ map (tyVarName . paramName) $ classTypeParams clazz
+        newtTDecl = newtTName baseName ++ params
+        newtCDecl = newtCName baseName
+        dataTDecl = dataTName baseName ++ params
+        dataCDecl = dataCName baseName ++ params
+        instances = concatMap parentInstance (classParents clazz)
+        parentInstance parent = """
+            instance #{qualifiedName} (#{newtTDecl})
+            """
+          where parentClass = info Map.! parent
+                modName = classModName parentClass
+                qualifiedName = modName ++ "__." ++ (tyclTName $ takeClassName modName)
+
+

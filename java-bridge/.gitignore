@@ -1,0 +1,11 @@
+*.hi
+*.o
+*.class
+dist/
+_darcs/
+*.swp
+.DS_Store
+*_
+examples/systemProperties/SystemProperties
+examples/pojo/Person
+examples/pojo/Person2

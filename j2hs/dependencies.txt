@@ -1,0 +1,374 @@
+Initializing JVM... Done.
+Looking up classes... 3321 found.
+Gathering refection information... (from dump) Done.
+63
+["java.applet","java.awt","java.awt.color","java.awt.datatransfer","java.awt.dnd","java.awt.dnd.peer","java.awt.event","java.awt.font","java.awt.geom","java.awt.im","java.awt.image","java.awt.image.renderable","java.awt.peer","java.awt.print","java.beans","java.beans.beancontext","java.io","java.lang","java.lang.annotation","java.lang.reflect","java.math","java.net","java.nio","java.nio.channels","java.nio.channels.spi","java.nio.charset","java.nio.file","java.nio.file.attribute","java.nio.file.spi","java.security","java.security.cert","java.security.interfaces","java.security.spec","java.text","java.util","java.util.concurrent","java.util.jar","java.util.regex","java.util.zip","javax.accessibility","javax.crypto","javax.print","javax.print.attribute","javax.print.event","javax.security.auth","javax.security.auth.callback","javax.security.auth.login","javax.security.auth.x500","javax.swing","javax.swing.border","javax.swing.colorchooser","javax.swing.event","javax.swing.filechooser","javax.swing.plaf","javax.swing.plaf.basic","javax.swing.table","javax.swing.text","javax.swing.tree","javax.swing.undo","org.xml.sax","org.xml.sax.helpers","sun.awt","sun.java2d.pipe"]
+java.applet, 0 (63) dependencies:
+  []
+java.awt, 0 (63) dependencies:
+  []
+java.awt.color, 0 (63) dependencies:
+  []
+java.awt.datatransfer, 0 (63) dependencies:
+  []
+java.awt.dnd, 0 (63) dependencies:
+  []
+java.awt.dnd.peer, 0 (63) dependencies:
+  []
+java.awt.event, 0 (63) dependencies:
+  []
+java.awt.font, 0 (63) dependencies:
+  []
+java.awt.geom, 0 (63) dependencies:
+  []
+java.awt.im, 0 (63) dependencies:
+  []
+java.awt.im.spi, 1 (64) dependencies:
+  ["java.awt.im.spi"]
+java.awt.image, 0 (63) dependencies:
+  []
+java.awt.image.renderable, 0 (63) dependencies:
+  []
+java.awt.peer, 0 (63) dependencies:
+  []
+java.awt.print, 0 (63) dependencies:
+  []
+java.beans, 0 (63) dependencies:
+  []
+java.beans.beancontext, 0 (63) dependencies:
+  []
+java.io, 0 (63) dependencies:
+  []
+java.lang, 0 (63) dependencies:
+  []
+java.lang.annotation, 0 (63) dependencies:
+  []
+java.lang.instrument, 1 (64) dependencies:
+  ["java.lang.instrument"]
+java.lang.management, 4 (67) dependencies:
+  ["java.lang.management","javax.management","javax.management.loading","javax.management.openmbean"]
+java.lang.ref, 1 (64) dependencies:
+  ["java.lang.ref"]
+java.lang.reflect, 0 (63) dependencies:
+  []
+java.math, 0 (63) dependencies:
+  []
+java.net, 0 (63) dependencies:
+  []
+java.nio, 0 (63) dependencies:
+  []
+java.nio.channels, 0 (63) dependencies:
+  []
+java.nio.channels.spi, 0 (63) dependencies:
+  []
+java.nio.charset, 0 (63) dependencies:
+  []
+java.nio.charset.spi, 0 (63) dependencies:
+  []
+java.nio.file, 0 (63) dependencies:
+  []
+java.nio.file.attribute, 0 (63) dependencies:
+  []
+java.nio.file.spi, 0 (63) dependencies:
+  []
+java.rmi, 1 (64) dependencies:
+  ["java.rmi"]
+java.rmi.activation, 3 (66) dependencies:
+  ["java.rmi","java.rmi.activation","java.rmi.server"]
+java.rmi.dgc, 2 (65) dependencies:
+  ["java.rmi","java.rmi.dgc"]
+java.rmi.registry, 3 (66) dependencies:
+  ["java.rmi","java.rmi.registry","java.rmi.server"]
+java.rmi.server, 2 (65) dependencies:
+  ["java.rmi","java.rmi.server"]
+java.security, 0 (63) dependencies:
+  []
+java.security.acl, 1 (64) dependencies:
+  ["java.security.acl"]
+java.security.cert, 0 (63) dependencies:
+  []
+java.security.interfaces, 0 (63) dependencies:
+  []
+java.security.spec, 0 (63) dependencies:
+  []
+java.sql, 3 (66) dependencies:
+  ["java.sql","java.util.logging","javax.xml.transform"]
+java.text, 0 (63) dependencies:
+  []
+java.text.spi, 1 (64) dependencies:
+  ["java.util.spi"]
+java.util, 0 (63) dependencies:
+  []
+java.util.concurrent, 0 (63) dependencies:
+  []
+java.util.concurrent.atomic, 1 (64) dependencies:
+  ["java.util.concurrent.atomic"]
+java.util.concurrent.locks, 1 (64) dependencies:
+  ["java.util.concurrent.locks"]
+java.util.jar, 0 (63) dependencies:
+  []
+java.util.logging, 1 (64) dependencies:
+  ["java.util.logging"]
+java.util.prefs, 1 (64) dependencies:
+  ["java.util.prefs"]
+java.util.regex, 0 (63) dependencies:
+  []
+java.util.spi, 1 (64) dependencies:
+  ["java.util.spi"]
+java.util.zip, 0 (63) dependencies:
+  []
+javax.accessibility, 0 (63) dependencies:
+  []
+javax.activation, 1 (64) dependencies:
+  ["javax.activation"]
+javax.activity, 1 (64) dependencies:
+  ["java.rmi"]
+javax.annotation, 1 (64) dependencies:
+  ["javax.annotation"]
+javax.annotation.processing, 6 (69) dependencies:
+  ["javax.annotation.processing","javax.lang.model","javax.lang.model.element","javax.lang.model.type","javax.lang.model.util","javax.tools"]
+javax.crypto, 0 (63) dependencies:
+  []
+javax.crypto.interfaces, 2 (65) dependencies:
+  ["javax.crypto.interfaces","javax.crypto.spec"]
+javax.crypto.spec, 1 (64) dependencies:
+  ["javax.crypto.spec"]
+javax.imageio, 6 (69) dependencies:
+  ["javax.imageio","javax.imageio.event","javax.imageio.metadata","javax.imageio.spi","javax.imageio.stream","org.w3c.dom"]
+javax.imageio.event, 6 (69) dependencies:
+  ["javax.imageio","javax.imageio.event","javax.imageio.metadata","javax.imageio.spi","javax.imageio.stream","org.w3c.dom"]
+javax.imageio.metadata, 6 (69) dependencies:
+  ["javax.imageio","javax.imageio.event","javax.imageio.metadata","javax.imageio.spi","javax.imageio.stream","org.w3c.dom"]
+javax.imageio.plugins.bmp, 6 (69) dependencies:
+  ["javax.imageio","javax.imageio.event","javax.imageio.metadata","javax.imageio.spi","javax.imageio.stream","org.w3c.dom"]
+javax.imageio.plugins.jpeg, 7 (70) dependencies:
+  ["javax.imageio","javax.imageio.event","javax.imageio.metadata","javax.imageio.plugins.jpeg","javax.imageio.spi","javax.imageio.stream","org.w3c.dom"]
+javax.imageio.spi, 6 (69) dependencies:
+  ["javax.imageio","javax.imageio.event","javax.imageio.metadata","javax.imageio.spi","javax.imageio.stream","org.w3c.dom"]
+javax.imageio.stream, 1 (64) dependencies:
+  ["javax.imageio.stream"]
+javax.jws, 1 (64) dependencies:
+  ["javax.jws"]
+javax.jws.soap, 1 (64) dependencies:
+  ["javax.jws.soap"]
+javax.lang.model, 1 (64) dependencies:
+  ["javax.lang.model"]
+javax.lang.model.element, 3 (66) dependencies:
+  ["javax.lang.model","javax.lang.model.element","javax.lang.model.type"]
+javax.lang.model.type, 3 (66) dependencies:
+  ["javax.lang.model","javax.lang.model.element","javax.lang.model.type"]
+javax.lang.model.util, 4 (67) dependencies:
+  ["javax.lang.model","javax.lang.model.element","javax.lang.model.type","javax.lang.model.util"]
+javax.management, 2 (65) dependencies:
+  ["javax.management","javax.management.loading"]
+javax.management.loading, 2 (65) dependencies:
+  ["javax.management","javax.management.loading"]
+javax.management.modelmbean, 3 (66) dependencies:
+  ["javax.management","javax.management.loading","javax.management.modelmbean"]
+javax.management.monitor, 3 (66) dependencies:
+  ["javax.management","javax.management.loading","javax.management.monitor"]
+javax.management.openmbean, 3 (66) dependencies:
+  ["javax.management","javax.management.loading","javax.management.openmbean"]
+javax.management.relation, 3 (66) dependencies:
+  ["javax.management","javax.management.loading","javax.management.relation"]
+javax.management.remote, 3 (66) dependencies:
+  ["javax.management","javax.management.loading","javax.management.remote"]
+javax.management.remote.rmi, 6 (69) dependencies:
+  ["java.rmi","java.rmi.server","javax.management","javax.management.loading","javax.management.remote","javax.management.remote.rmi"]
+javax.management.timer, 3 (66) dependencies:
+  ["javax.management","javax.management.loading","javax.management.timer"]
+javax.naming, 1 (64) dependencies:
+  ["javax.naming"]
+javax.naming.directory, 2 (65) dependencies:
+  ["javax.naming","javax.naming.directory"]
+javax.naming.event, 3 (66) dependencies:
+  ["javax.naming","javax.naming.directory","javax.naming.event"]
+javax.naming.ldap, 6 (69) dependencies:
+  ["javax.naming","javax.naming.directory","javax.naming.event","javax.naming.ldap","javax.net","javax.net.ssl"]
+javax.naming.spi, 3 (66) dependencies:
+  ["javax.naming","javax.naming.directory","javax.naming.spi"]
+javax.net, 1 (64) dependencies:
+  ["javax.net"]
+javax.net.ssl, 2 (65) dependencies:
+  ["javax.net","javax.net.ssl"]
+javax.print, 0 (63) dependencies:
+  []
+javax.print.attribute, 0 (63) dependencies:
+  []
+javax.print.attribute.standard, 1 (64) dependencies:
+  ["javax.print.attribute.standard"]
+javax.print.event, 0 (63) dependencies:
+  []
+javax.rmi, 1 (64) dependencies:
+  ["java.rmi"]
+javax.rmi.CORBA, 6 (69) dependencies:
+  ["java.rmi","javax.rmi.CORBA","org.omg.CORBA","org.omg.CORBA.portable","org.omg.CORBA_2_3.portable","org.omg.SendingContext"]
+javax.rmi.ssl, 4 (67) dependencies:
+  ["java.rmi","java.rmi.server","javax.net","javax.net.ssl"]
+javax.script, 1 (64) dependencies:
+  ["javax.script"]
+javax.security.auth, 0 (63) dependencies:
+  []
+javax.security.auth.callback, 0 (63) dependencies:
+  []
+javax.security.auth.kerberos, 1 (64) dependencies:
+  ["javax.security.auth.kerberos"]
+javax.security.auth.login, 0 (63) dependencies:
+  []
+javax.security.auth.spi, 0 (63) dependencies:
+  []
+javax.security.auth.x500, 0 (63) dependencies:
+  []
+javax.security.cert, 1 (64) dependencies:
+  ["javax.security.cert"]
+javax.security.sasl, 1 (64) dependencies:
+  ["javax.security.sasl"]
+javax.sound.midi, 1 (64) dependencies:
+  ["javax.sound.midi"]
+javax.sound.midi.spi, 1 (64) dependencies:
+  ["javax.sound.midi"]
+javax.sound.sampled, 1 (64) dependencies:
+  ["javax.sound.sampled"]
+javax.sound.sampled.spi, 1 (64) dependencies:
+  ["javax.sound.sampled"]
+javax.sql, 5 (68) dependencies:
+  ["java.sql","java.util.logging","javax.sql","javax.transaction.xa","javax.xml.transform"]
+javax.sql.rowset, 8 (71) dependencies:
+  ["java.sql","java.util.logging","javax.naming","javax.sql","javax.sql.rowset","javax.sql.rowset.spi","javax.transaction.xa","javax.xml.transform"]
+javax.sql.rowset.serial, 3 (66) dependencies:
+  ["java.sql","java.util.logging","javax.xml.transform"]
+javax.sql.rowset.spi, 8 (71) dependencies:
+  ["java.sql","java.util.logging","javax.naming","javax.sql","javax.sql.rowset","javax.sql.rowset.spi","javax.transaction.xa","javax.xml.transform"]
+javax.swing, 0 (63) dependencies:
+  []
+javax.swing.border, 0 (63) dependencies:
+  []
+javax.swing.colorchooser, 0 (63) dependencies:
+  []
+javax.swing.event, 0 (63) dependencies:
+  []
+javax.swing.filechooser, 0 (63) dependencies:
+  []
+javax.swing.plaf, 0 (63) dependencies:
+  []
+javax.swing.plaf.basic, 0 (63) dependencies:
+  []
+javax.swing.plaf.metal, 1 (64) dependencies:
+  ["javax.swing.plaf.metal"]
+javax.swing.plaf.multi, 0 (63) dependencies:
+  []
+javax.swing.plaf.synth, 1 (64) dependencies:
+  ["javax.swing.plaf.synth"]
+javax.swing.table, 0 (63) dependencies:
+  []
+javax.swing.text, 0 (63) dependencies:
+  []
+javax.swing.text.html, 1 (64) dependencies:
+  ["javax.swing.text.html"]
+javax.swing.text.html.parser, 2 (65) dependencies:
+  ["javax.swing.text.html","javax.swing.text.html.parser"]
+javax.swing.text.rtf, 0 (63) dependencies:
+  []
+javax.swing.tree, 0 (63) dependencies:
+  []
+javax.swing.undo, 0 (63) dependencies:
+  []
+javax.tools, 4 (67) dependencies:
+  ["javax.lang.model","javax.lang.model.element","javax.lang.model.type","javax.tools"]
+javax.transaction, 1 (64) dependencies:
+  ["java.rmi"]
+javax.transaction.xa, 1 (64) dependencies:
+  ["javax.transaction.xa"]
+javax.xml, 0 (63) dependencies:
+  []
+javax.xml.bind, 12 (75) dependencies:
+  ["javax.activation","javax.xml.bind","javax.xml.bind.annotation.adapters","javax.xml.bind.attachment","javax.xml.namespace","javax.xml.stream","javax.xml.stream.events","javax.xml.stream.util","javax.xml.transform","javax.xml.validation","org.w3c.dom","org.w3c.dom.ls"]
+javax.xml.bind.annotation, 15 (78) dependencies:
+  ["javax.activation","javax.xml.bind","javax.xml.bind.annotation","javax.xml.bind.annotation.adapters","javax.xml.bind.attachment","javax.xml.namespace","javax.xml.parsers","javax.xml.stream","javax.xml.stream.events","javax.xml.stream.util","javax.xml.transform","javax.xml.transform.dom","javax.xml.validation","org.w3c.dom","org.w3c.dom.ls"]
+javax.xml.bind.annotation.adapters, 1 (64) dependencies:
+  ["javax.xml.bind.annotation.adapters"]
+javax.xml.bind.attachment, 1 (64) dependencies:
+  ["javax.activation"]
+javax.xml.bind.helpers, 13 (76) dependencies:
+  ["javax.activation","javax.xml.bind","javax.xml.bind.annotation.adapters","javax.xml.bind.attachment","javax.xml.bind.helpers","javax.xml.namespace","javax.xml.stream","javax.xml.stream.events","javax.xml.stream.util","javax.xml.transform","javax.xml.validation","org.w3c.dom","org.w3c.dom.ls"]
+javax.xml.bind.util, 14 (77) dependencies:
+  ["javax.activation","javax.xml.bind","javax.xml.bind.annotation.adapters","javax.xml.bind.attachment","javax.xml.namespace","javax.xml.stream","javax.xml.stream.events","javax.xml.stream.util","javax.xml.transform","javax.xml.transform.sax","javax.xml.validation","org.w3c.dom","org.w3c.dom.ls","org.xml.sax.ext"]
+javax.xml.crypto, 2 (65) dependencies:
+  ["javax.xml.crypto","javax.xml.crypto.dsig.keyinfo"]
+javax.xml.crypto.dom, 3 (66) dependencies:
+  ["javax.xml.crypto","javax.xml.crypto.dsig.keyinfo","org.w3c.dom"]
+javax.xml.crypto.dsig, 4 (67) dependencies:
+  ["javax.xml.crypto","javax.xml.crypto.dsig","javax.xml.crypto.dsig.keyinfo","javax.xml.crypto.dsig.spec"]
+javax.xml.crypto.dsig.dom, 5 (68) dependencies:
+  ["javax.xml.crypto","javax.xml.crypto.dsig","javax.xml.crypto.dsig.keyinfo","javax.xml.crypto.dsig.spec","org.w3c.dom"]
+javax.xml.crypto.dsig.keyinfo, 2 (65) dependencies:
+  ["javax.xml.crypto","javax.xml.crypto.dsig.keyinfo"]
+javax.xml.crypto.dsig.spec, 3 (66) dependencies:
+  ["javax.xml.crypto","javax.xml.crypto.dsig.keyinfo","javax.xml.crypto.dsig.spec"]
+javax.xml.datatype, 2 (65) dependencies:
+  ["javax.xml.datatype","javax.xml.namespace"]
+javax.xml.namespace, 1 (64) dependencies:
+  ["javax.xml.namespace"]
+javax.xml.parsers, 5 (68) dependencies:
+  ["javax.xml.parsers","javax.xml.transform","javax.xml.validation","org.w3c.dom","org.w3c.dom.ls"]
+javax.xml.soap, 6 (69) dependencies:
+  ["javax.activation","javax.xml.namespace","javax.xml.soap","javax.xml.transform","javax.xml.transform.dom","org.w3c.dom"]
+javax.xml.stream, 5 (68) dependencies:
+  ["javax.xml.namespace","javax.xml.stream","javax.xml.stream.events","javax.xml.stream.util","javax.xml.transform"]
+javax.xml.stream.events, 5 (68) dependencies:
+  ["javax.xml.namespace","javax.xml.stream","javax.xml.stream.events","javax.xml.stream.util","javax.xml.transform"]
+javax.xml.stream.util, 5 (68) dependencies:
+  ["javax.xml.namespace","javax.xml.stream","javax.xml.stream.events","javax.xml.stream.util","javax.xml.transform"]
+javax.xml.transform, 1 (64) dependencies:
+  ["javax.xml.transform"]
+javax.xml.transform.dom, 2 (65) dependencies:
+  ["javax.xml.transform","org.w3c.dom"]
+javax.xml.transform.sax, 3 (66) dependencies:
+  ["javax.xml.transform","javax.xml.transform.sax","org.xml.sax.ext"]
+javax.xml.transform.stax, 5 (68) dependencies:
+  ["javax.xml.namespace","javax.xml.stream","javax.xml.stream.events","javax.xml.stream.util","javax.xml.transform"]
+javax.xml.transform.stream, 1 (64) dependencies:
+  ["javax.xml.transform"]
+javax.xml.validation, 4 (67) dependencies:
+  ["javax.xml.transform","javax.xml.validation","org.w3c.dom","org.w3c.dom.ls"]
+javax.xml.ws, 15 (78) dependencies:
+  ["javax.activation","javax.xml.bind","javax.xml.bind.annotation.adapters","javax.xml.bind.attachment","javax.xml.namespace","javax.xml.stream","javax.xml.stream.events","javax.xml.stream.util","javax.xml.transform","javax.xml.validation","javax.xml.ws","javax.xml.ws.handler","javax.xml.ws.spi.http","org.w3c.dom","org.w3c.dom.ls"]
+javax.xml.ws.handler, 15 (78) dependencies:
+  ["javax.activation","javax.xml.bind","javax.xml.bind.annotation.adapters","javax.xml.bind.attachment","javax.xml.namespace","javax.xml.stream","javax.xml.stream.events","javax.xml.stream.util","javax.xml.transform","javax.xml.validation","javax.xml.ws","javax.xml.ws.handler","javax.xml.ws.spi.http","org.w3c.dom","org.w3c.dom.ls"]
+javax.xml.ws.handler.soap, 17 (80) dependencies:
+  ["javax.activation","javax.xml.bind","javax.xml.bind.annotation.adapters","javax.xml.bind.attachment","javax.xml.namespace","javax.xml.soap","javax.xml.stream","javax.xml.stream.events","javax.xml.stream.util","javax.xml.transform","javax.xml.transform.dom","javax.xml.validation","javax.xml.ws","javax.xml.ws.handler","javax.xml.ws.spi.http","org.w3c.dom","org.w3c.dom.ls"]
+javax.xml.ws.http, 15 (78) dependencies:
+  ["javax.activation","javax.xml.bind","javax.xml.bind.annotation.adapters","javax.xml.bind.attachment","javax.xml.namespace","javax.xml.stream","javax.xml.stream.events","javax.xml.stream.util","javax.xml.transform","javax.xml.validation","javax.xml.ws","javax.xml.ws.handler","javax.xml.ws.spi.http","org.w3c.dom","org.w3c.dom.ls"]
+javax.xml.ws.soap, 18 (81) dependencies:
+  ["javax.activation","javax.xml.bind","javax.xml.bind.annotation.adapters","javax.xml.bind.attachment","javax.xml.namespace","javax.xml.soap","javax.xml.stream","javax.xml.stream.events","javax.xml.stream.util","javax.xml.transform","javax.xml.transform.dom","javax.xml.validation","javax.xml.ws","javax.xml.ws.handler","javax.xml.ws.soap","javax.xml.ws.spi.http","org.w3c.dom","org.w3c.dom.ls"]
+javax.xml.ws.spi, 17 (80) dependencies:
+  ["javax.activation","javax.xml.bind","javax.xml.bind.annotation.adapters","javax.xml.bind.attachment","javax.xml.namespace","javax.xml.stream","javax.xml.stream.events","javax.xml.stream.util","javax.xml.transform","javax.xml.validation","javax.xml.ws","javax.xml.ws.handler","javax.xml.ws.spi","javax.xml.ws.spi.http","javax.xml.ws.wsaddressing","org.w3c.dom","org.w3c.dom.ls"]
+javax.xml.ws.spi.http, 1 (64) dependencies:
+  ["javax.xml.ws.spi.http"]
+javax.xml.ws.wsaddressing, 16 (79) dependencies:
+  ["javax.activation","javax.xml.bind","javax.xml.bind.annotation.adapters","javax.xml.bind.attachment","javax.xml.namespace","javax.xml.stream","javax.xml.stream.events","javax.xml.stream.util","javax.xml.transform","javax.xml.validation","javax.xml.ws","javax.xml.ws.handler","javax.xml.ws.spi.http","javax.xml.ws.wsaddressing","org.w3c.dom","org.w3c.dom.ls"]
+javax.xml.xpath, 2 (65) dependencies:
+  ["javax.xml.namespace","javax.xml.xpath"]
+org.omg.CORBA, 2 (65) dependencies:
+  ["org.omg.CORBA","org.omg.CORBA.portable"]
+org.omg.CORBA.portable, 2 (65) dependencies:
+  ["org.omg.CORBA","org.omg.CORBA.portable"]
+org.omg.CORBA_2_3.portable, 2 (65) dependencies:
+  ["org.omg.CORBA","org.omg.CORBA.portable"]
+org.omg.SendingContext, 3 (66) dependencies:
+  ["org.omg.CORBA","org.omg.CORBA.portable","org.omg.SendingContext"]
+org.w3c.dom, 1 (64) dependencies:
+  ["org.w3c.dom"]
+org.w3c.dom.ls, 1 (64) dependencies:
+  ["org.w3c.dom.ls"]
+org.xml.sax, 0 (63) dependencies:
+  []
+org.xml.sax.ext, 0 (63) dependencies:
+  []
+org.xml.sax.helpers, 0 (63) dependencies:
+  []
+sun.awt, 0 (63) dependencies:
+  []
+sun.java2d.pipe, 0 (63) dependencies:
+  []
+Generating modules for 3321 classes in 184 packages...

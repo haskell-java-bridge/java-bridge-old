@@ -1,0 +1,141 @@
+{-# LANGUAGE Haskell2010 #-}
+{-# OPTIONS
+    -Wall
+    -fno-warn-missing-signatures
+    -fno-warn-name-shadowing
+ #-}
+
+module Main where
+
+import Options
+import JavaSE6
+import Java2Haskell
+
+import Foreign.Java.Utils
+import Foreign.Java.JNI (javaBridgeVersion)
+
+import System.Console.GetOpt
+import System.Environment (getArgs, getProgName)
+
+import Data.NamedRecord
+import Data.List
+import Data.List.Split
+import Data.Word
+
+
+versionInfo = """
+    Java <-> Haskell Bindings Generator (using java-bridge #{javaBridgeVersion})"""
+
+helpText = """
+    
+    """
+
+-- | The flags (needed for the options list / GetOpt).
+data Flag = Help
+          | Version
+          | Packages [String]
+          | Classpath [String]
+          | SearchDepth Word32
+          | TargetDirectory String
+          | SaveReflectDump String
+          | LoadReflectDump String
+          | CompleteSE6
+          | OnlyReflect
+          | Filtered
+          | Verbose
+
+-- | The Command line options as fed to the GetOpt parser.
+options = [
+    Option "h" ["help"] (NoArg Help)
+        "Print this help text.",
+
+    Option "V" ["version"] (NoArg Version)
+        "Print version information.",
+
+    Option "c" ["classpath"] (ReqArg readClasspath "")
+        "The Java classpath to be used.",
+
+    Option "P" ["packages"] (ReqArg readPackages "")
+        "The packages to translate.",
+
+    Option "d" ["search-depth"] (ReqArg readSearchDepth "")
+        "The maximum search depth for dependent Java classes.",
+
+    Option "v" ["verbose"] (NoArg Verbose)
+        "Verbose output, prints extra diagnostic information.",
+
+    Option "D" ["dump-reflection-info"] (ReqArg SaveReflectDump "")
+        "Dump reflection information into the file specified by -r.",
+
+    Option "L" ["load-reflection-dump"] (ReqArg LoadReflectDump "")
+        "Load a reflection dump instead of looking it up.",
+
+    Option "X" ["java-se"] (NoArg CompleteSE6)
+        "Completely translate Java SE.",
+
+    Option "F" ["filtered"] (NoArg Filtered)
+        "Only translate a subset of the Java SE.",
+
+    Option "t" ["target-directory"] (ReqArg TargetDirectory "")
+        "The target directory for generated source files."
+ 
+ ] where
+    readPackages = Packages . splitOneOf ":;,"
+    readClasspath = Classpath . splitOneOf ":;,"
+    readSearchDepth = SearchDepth . read
+
+parseArgs :: IO (Either (Options, [String]) [String])
+-- ^ Parse command line arguments with the help of the GetOpt library.
+parseArgs = do
+    (opts, args, errs) <- getArgs >>= return . getOpt Permute options
+    if null errs
+        then return $ Left  (parseOpts newOptions opts, args)
+        else return $ Right errs
+  where
+    parseOpts opts [] = opts
+    parseOpts opts (x:xs) = flip parseOpts xs $
+        case x of
+            Help              -> opts `set` optShowHelp        := True
+            Version           -> opts `set` optShowVersion     := True
+            Verbose           -> opts `set` optVerbose         := True
+            Filtered          -> opts `set` optFiltered        := True
+            CompleteSE6       -> opts `set` optCompleteSE6     := True
+            OnlyReflect       -> opts `set` optOnlyReflect     := True
+            Classpath cp      -> opts `set` optClasspath       := cp
+            Packages pkgs     -> opts `set` optPackages        := pkgs
+            SearchDepth d     -> opts `set` optSearchDepth     := d
+            SaveReflectDump f -> opts `set` optSaveReflectDump := f
+            LoadReflectDump f -> opts `set` optLoadReflectDump := f
+            TargetDirectory t -> opts `set` optTargetDirectory := t
+
+main :: IO ()
+-- ^ main: parseArgs and either 'run' or show errors.
+main = parseArgs >>= either (uncurry run) (mapM_ putStr)
+
+run :: Options -> [String] -> IO ()
+-- ^ The actual main function.
+run opts _args -- arg are currently unused
+    | opts `get` optShowHelp = do
+        progName <- getProgName
+        putStrLn (usageInfo """
+            #{versionInfo}
+            
+            Usage: #{progName} [options]
+            
+            #{helpText}
+            """ options)
+
+    | opts `get` optShowVersion = putStrLn versionInfo
+    | opts `get` optCompleteSE6 =
+        if opts `get` optFiltered then j2hs opts (filter minimal  javaClassesSE6)
+                                  else j2hs opts (filter justJava javaClassesSE6)
+
+    | otherwise = getProgName >>= \progName -> putStr """
+        No command given. Use `#{progName} help' for help.
+        """
+  where
+    justJava = ("java" `isPrefixOf`)
+    minimal name = pkg `elem` (opts `get` optPackages)
+        where (pkg, _) = splitClassName name
+
+

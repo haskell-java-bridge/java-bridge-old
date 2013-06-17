@@ -1,0 +1,10 @@
+OS X is complicated. Cocoa is a beast. As a result, windows
+created using AWT/Swing are not properly registered with
+the window management. Keyboard focus is difficult...
+
+An application is not properly initialized as @NSApplication@,
+thus the above mentioned quirks. If someone knows how to
+properly and manually initialize a Cocoa application please
+get in touch with me. The current workaround is in the function
+@runCocoaMain@ in @src/ffijni.c@.
+
